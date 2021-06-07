@@ -1,0 +1,11 @@
+[run]
+# cdw hook shall be enabled as soon as we refactor / improve it!
+omit = *tests*,*cloudera/cdp/security/cdp_requests/*,*setup.py,*cdw_*.py
+
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    @abstract
+    raise NotImplementedError
