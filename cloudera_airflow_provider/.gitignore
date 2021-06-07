@@ -1,0 +1,9 @@
+.idea/
+venv/
+.tox/
+dist/
+*.egg-info
+.eggs/
+build/
+AUTHORS
+ChangeLog
