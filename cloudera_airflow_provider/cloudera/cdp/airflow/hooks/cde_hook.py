@@ -159,19 +159,23 @@ class CDEHook(BaseHook): # type: ignore
                     check_response=False,
                 )
 
-            if self.connection.insecure is not None:
-                extra_options = {**extra_options, 'verify': not self.connection.insecure}
-                # Small hack to override the insecure header property passed from the
-                # extra in HTTPHook, which is a boolean but must be a string to be part
-                # of the headers
-                request_extra_headers = {'insecure': str(self.connection.insecure)}
+            if self.connection.insecure:
+                self.log.debug('Setting session verify to False')
+                extra_options = {**extra_options, 'verify': False}
             else:
                 ca_cert = self.connection.ca_cert_path
+                self.log.debug('ca_cert is %s', ca_cert)
                 if ca_cert:
+                    self.log.debug('Setting session verify to %s', ca_cert)
                     extra_options = {**extra_options, 'verify': ca_cert}
                 else:
                     # Ensures secure connection by default, it is False in Airflow 1
                     extra_options = {**extra_options, 'verify': True}
+
+            # Small hack to override the insecure header property passed from the
+            # extra in HTTPHook, which is a boolean but must be a string to be part
+            # of the headers
+            request_extra_headers = {'insecure': str(self.connection.insecure)}
 
             common_kwargs = dict(
                 _retry_args=dict(

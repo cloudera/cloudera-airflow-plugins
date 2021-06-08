@@ -44,7 +44,7 @@ from airflow.hooks.base_hook import BaseHook
 from airflow.models import Connection
 from airflow.utils.log.logging_mixin import LoggingMixin
 from requests import Session
-from tests.utils import _make_response
+from tests.utils import _get_call_arguments, _make_response
 from cloudera.cdp.airflow.hooks.cde_hook import CDEHook, CDEHookException
 from cloudera.cdp.security.cde_security import (CDEAPITokenAuth,
                                                 CDETokenAuthResponse)
@@ -75,7 +75,7 @@ TEST_OVERRIDES = {
 TEST_AK="access_key"
 TEST_PK="private_key_xxxxx_xxxxx_xxxxx_xxxxx"
 TEST_CUSTOM_CA_CERTIFICATE="/ca_cert/letsencrypt-stg-root-x1.pem"
-TEST_EXTRA=f'{{"ca_cert": "{TEST_CUSTOM_CA_CERTIFICATE}"}}'
+TEST_EXTRA=f'{{"ca_cert_path": "{TEST_CUSTOM_CA_CERTIFICATE}"}}'
 
 def _get_test_connection(**kwargs):
     kwargs = {**TEST_DEFAULT_CONNECTION_DICT, **kwargs}
@@ -172,13 +172,51 @@ class CDEHookTest(unittest.TestCase):
         cde_mock.assert_called()
         connection_mock.assert_called()
 
-    @mock.patch.object(BaseHook, 'get_connection', return_value=_get_test_connection(extra='{}'))
-    def test_get_no_custom_ca_certificate(self, connection_mock):
-        """Ensure that no custom CA fields are set
-        if custom CAs are not specified in the extras"""
+    @mock.patch('cloudera.cdp.security.cde_security.CDEAPITokenAuth.get_cde_authentication_token',
+        return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, 'send', return_value=_make_response(201, {'id': 10}, ""))
+    @mock.patch.object(BaseHook, 'get_connection',
+        return_value=_get_test_connection(extra='{"insecure": true}'))
+    def test_submit_job_insecure(self, connection_mock, session_send_mock, cde_mock):
+        """Ensure insecure mode is taken into account"""
         cde_hook = CDEHook()
-        self.assertEqual(None, cde_hook.connection.ca_cert_path)
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, 10)
+        cde_mock.assert_called()
         connection_mock.assert_called()
+        session_send_mock.assert_called()
+        called_args = _get_call_arguments(session_send_mock.call_args)
+        self.assertEqual(called_args['verify'], False)
+
+    @mock.patch('cloudera.cdp.security.cde_security.CDEAPITokenAuth.get_cde_authentication_token',
+        return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, 'send', return_value=_make_response(201, {'id': 10}, ""))
+    @mock.patch.object(BaseHook, 'get_connection', return_value=_get_test_connection(extra='{}'))
+    def test_submit_job_no_custom_ca_certificate(self, connection_mock, session_send_mock, cde_mock):
+        """Ensure that default TLS security configuration runs fine"""
+        cde_hook = CDEHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, 10)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called()
+        called_args = _get_call_arguments(session_send_mock.call_args)
+        self.assertEqual(called_args['verify'], True)
+
+    @mock.patch('cloudera.cdp.security.cde_security.CDEAPITokenAuth.get_cde_authentication_token',
+        return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, 'send', return_value=_make_response(201, {'id': 10}, ""))
+    @mock.patch.object(BaseHook, 'get_connection', return_value=TEST_DEFAULT_CONNECTION)
+    def test_submit_job_custom_ca_certificate(self, connection_mock, session_send_mock, cde_mock):
+        """Ensure custom is taken into account"""
+        cde_hook = CDEHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, 10)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called()
+        called_args = _get_call_arguments(session_send_mock.call_args)
+        self.assertEqual(called_args['verify'], TEST_CUSTOM_CA_CERTIFICATE)
 
     @mock.patch.object(BaseHook, 'get_connection',
         return_value=_get_test_connection(extra='{"cache_dir": " "}'))
