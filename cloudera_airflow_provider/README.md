@@ -4,9 +4,31 @@ This component provides two Cloudera job operators to be integrated in your dags
 * CDWOperator, for triggering Cloudera Data Warehouse jobs through username/password as of today
 
 ## Installation
-Run the following snippet on your airflow server:
+There are two ways of installing the provider:
+
+1. Direct install with 
+ ```
+pip install <package_url>
 ```
-git clone https://github.com/cloudera/cloudera-airflow-plugins.git
+where *package_url* is the link of the desired wheel package in https://github.com/cloudera/cloudera-airflow-plugins/releases
+
+Example:
+```
+pip install https://github.com/cloudera/cloudera-airflow-plugins/releases/download/v1.0.0/cloudera_airflow_provider-1.0.0-py3-none-any.whl
+```
+
+
+2. Local install. Run the following snippet on your airflow server:
+```
+git clone --depth 1 https://github.com/cloudera/cloudera-airflow-plugins.git
+cd cloudera-airflow-plugins/cloudera_airflow_provider 
+pip install .
+```
+
+If you need to install a specific version, specify the corresponding version like in the example below:
+
+```
+git clone --depth 1 --branch v1.0.0  https://github.com/cloudera/cloudera-airflow-plugins.git
 cd cloudera-airflow-plugins/cloudera_airflow_provider 
 pip install .
 ```
