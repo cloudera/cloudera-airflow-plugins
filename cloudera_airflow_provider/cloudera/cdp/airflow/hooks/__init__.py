@@ -1,4 +1,4 @@
-#  CLOUDERA CDP
+#  Cloudera Airflow Provider
 #  (C) Cloudera, Inc. 2021-2021
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
