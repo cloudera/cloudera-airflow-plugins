@@ -39,7 +39,7 @@ import os
 from abc import ABC, abstractmethod
 from functools import wraps
 from json import JSONDecodeError, dumps, loads
-from pathlib import Path
+from pathlib2 import Path
 from typing import Callable, Optional, Type
 
 from airflow.utils.log.logging_mixin import LoggingMixin  # type: ignore
