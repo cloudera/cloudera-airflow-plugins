@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -32,17 +32,14 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
+"""Holds model objects related to CDE Environments."""
 
-"""
-Holds model objects related to CDE Environments
-"""
 import re
 from urllib.parse import urlparse
 
+
 class VirtualCluster:
-    """
-    Represents a CDE Virtual cluster and hold various helper methods
-    """
+    """Represents a CDE Virtual cluster and hold various helper methods."""
 
     ACCESS_KEY_AUTH_ENDPOINT_PATH = "/gateway/cdptkn/knoxtoken/api/v1/token"
 
@@ -58,18 +55,18 @@ class VirtualCluster:
 
     def get_service_id(self) -> str:
         """
-            Obtains cluster id from the virtual cluster endpoint.
+        Obtains cluster id from the virtual cluster endpoint.
 
-            Returns:
-                cluster id string in the form 'cluster-<cluster_id>'
+        Returns:
+            cluster id string in the form 'cluster-<cluster_id>'
 
-            Raises:
-                ValueError: When the given url is not in the expected format
+        Raises:
+            ValueError: When the given url is not in the expected format
         """
         pattern = re.compile("cde-[a-zA-Z0-9]*")
         try:
             first_match = pattern.findall(self.vcluster_endpoint)[0]
-            return re.sub('^cde-', 'cluster-', first_match, 1)
+            return re.sub("^cde-", "cluster-", first_match, 1)
         except IndexError as err:
             raise ValueError(f"Cluster ID not found in {self.vcluster_endpoint}") from err
 
@@ -83,11 +80,12 @@ class VirtualCluster:
         Raises:
             ValueError of the input has incorrect form
         """
-        auth_endpoint = re.sub('^https://[a-zA-Z0-9]*', 'https://service',
-                            self.vcluster_endpoint, 1)
+        auth_endpoint = re.sub("^https://[a-zA-Z0-9]*", "https://service", self.vcluster_endpoint, 1)
 
         if auth_endpoint == self.vcluster_endpoint:
-            raise ValueError(f"Invalid vcluster endpoint given: {self.vcluster_endpoint}", )
+            raise ValueError(
+                f"Invalid vcluster endpoint given: {self.vcluster_endpoint}",
+            )
 
         auth_endpoint_url = urlparse(auth_endpoint)
         auth_endpoint_url = auth_endpoint_url._replace(path=self.ACCESS_KEY_AUTH_ENDPOINT_PATH)

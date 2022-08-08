@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -32,14 +32,14 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
-"""Covers root exception for CDP hooks"""
-from typing import Optional
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.hooks`."""
 
-class CDPHookException(Exception):
-    """Root exception for custom Cloudera hooks, which is used to handle any known exceptions"""
-    def __init__(self, raised_from: Optional[Exception] = None, msg: Optional[str] = None) -> None:
-        super().__init__(raised_from, msg)
-        self.raised_from = raised_from
+import warnings
 
-    def __str__(self) -> str:
-        return self.__repr__()
+from cloudera.airflow.providers.hooks import CdpHookException as CDPHookException # pylint: disable=unused-import
+
+warnings.warn(
+    "This module is deprecated. Please use `cloudera.airflow.providers.hooks`.",
+    DeprecationWarning,
+    stacklevel=2,
+)

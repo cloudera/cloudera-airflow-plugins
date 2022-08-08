@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -36,16 +36,18 @@
 """Utils module for common utility methods used in the tests"""
 from itertools import tee
 from json import dumps
+from typing import Dict, Any, Tuple, Iterable, Optional
 
 from requests import Response
 
 
-def iter_len_plus_one(iterator):
+def iter_len_plus_one(iterator: Iterable) -> int:
     """Return the length + 1 of the given iterator.
     The +1 is because in the tests the first side effect is already consumed"""
     return sum(1 for _ in tee(iterator)) + 1
 
-def _get_call_arguments(self):
+
+def _get_call_arguments(self: Tuple) -> Dict[str, Any]:
     if len(self) == 2:
         # returned tuple is args, kwargs = self
         _, kwargs = self
@@ -55,9 +57,11 @@ def _get_call_arguments(self):
 
     return kwargs
 
-def _make_response(status, body, reason):
+
+def _make_response(status: int, body: Optional[dict], reason: str) -> Response:
     resp = Response()
     resp.status_code = status
+    resp.encoding = 'utf-8'
     resp._content = dumps(body).encode('utf-8')
     resp.reason = reason
     return resp

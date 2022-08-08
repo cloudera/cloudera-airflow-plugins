@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -36,17 +36,20 @@
 """Handles token caching and its various caching mechanisms"""
 import base64
 import os
+import logging
+
 from abc import ABC, abstractmethod
 from functools import wraps
 from json import JSONDecodeError, dumps, loads
-from pathlib import Path
 from typing import Callable, Optional, Type
 
-from airflow.utils.log.logging_mixin import LoggingMixin  # type: ignore
+from pathlib2 import Path   # type: ignore
 from cryptography.fernet import Fernet, InvalidToken
+
 from cloudera.cdp.security import SecurityError, TokenResponse
 
-LOG = LoggingMixin().log
+LOG = logging.getLogger(__name__)
+
 
 class CacheError(SecurityError):
     """Exception used when there is an issue while interacting with token cache"""
@@ -65,8 +68,7 @@ class TokenCacheStrategy(ABC):
     A Fernet based encryptor is available for encrypting cache content if necessary
     """
 
-    def __init__(self, token_response_class: Type[TokenResponse],
-                encryption_key: Optional[str]) -> None:
+    def __init__(self, token_response_class: Type[TokenResponse], encryption_key: Optional[str]) -> None:
         self.token_response_class = token_response_class
         if encryption_key:
             fernet_encrytion_key = self.get_fernet_encryption_key(encryption_key)
@@ -74,8 +76,10 @@ class TokenCacheStrategy(ABC):
 
     @classmethod
     def get_fernet_encryption_key(cls, encryption_key: str) -> bytes:
-        """Get valid encryption key from candidate encryption key
-        if it does not fit Fernet's module requirements (32 characters and base64 encoding)"""
+        """
+        Get valid encryption key from candidate encryption key
+        if it does not fit Fernet's module requirements (32 characters and base64 encoding)
+        """
         if not encryption_key:
             raise ValueError("Encryption key cannot be None or empty")
         if len(encryption_key) < 32:
@@ -90,7 +94,7 @@ class TokenCacheStrategy(ABC):
         # Truncate in case of accented letters.
         # TODO: If need to be more generic, we should handle that the input encryption key
         #       can be in other encoding than utf-8. Currently not an issue.
-        final_encryption_key_bytes = final_encryption_key.encode('utf-8')[:32]
+        final_encryption_key_bytes = final_encryption_key.encode("utf-8")[:32]
         base64key = base64.urlsafe_b64encode(final_encryption_key_bytes)
 
         return base64key
@@ -135,16 +139,21 @@ class TokenCacheStrategy(ABC):
         """
         raise NotImplementedError
 
+
 class EncryptedFileTokenCacheStrategy(TokenCacheStrategy):
-    """File based caching mechanism. A file is created for each cache entry.
-    Content of the cache is encrypted"""
+    """
+    File based caching mechanism. A file is created for each cache entry.
+    Content of the cache is encrypted
+    """
 
     CACHE_SUB_DIR = "token_cache"
 
-    def __init__(self,
-                token_response_class: Type[TokenResponse],
-                encryption_key: str,
-                cache_dir: Optional[str] = ".") -> None:
+    def __init__(
+        self,
+        token_response_class: Type[TokenResponse],
+        encryption_key: str,
+        cache_dir: Optional[str] = ".",
+    ) -> None:
         super().__init__(token_response_class, encryption_key=encryption_key)
         try:
             if cache_dir and cache_dir.strip():
@@ -158,8 +167,10 @@ class EncryptedFileTokenCacheStrategy(TokenCacheStrategy):
                     LOG.debug("Directory created successfully")
                 except Exception as err:
                     LOG.error("Failed to create %s", self.cache_dir)
-                    raise CacheError(err,
-                        msg=f"Cache Directory {self.cache_dir} could not be created") from err
+                    raise CacheError(
+                        err,
+                        msg=f"Cache Directory {self.cache_dir} could not be created",
+                    ) from err
             else:
                 LOG.error("No value defined for cache_dir")
                 raise ValueError("Cache dir is empty")
@@ -168,8 +179,8 @@ class EncryptedFileTokenCacheStrategy(TokenCacheStrategy):
             raise CacheError(err, msg="Cache Directory and Cache Keys must be specified") from err
         self.cache_encoding = "utf-8"
 
-    def get_cache_path(self, cache_key: str) -> str:
-        """Cache path for assoctiated cache key
+    def get_cache_path(self, cache_key: str) -> Path:
+        """Cache path for associated cache key
 
         Args:
             cache_key: the cache key
@@ -184,36 +195,34 @@ class EncryptedFileTokenCacheStrategy(TokenCacheStrategy):
     def get_cached_auth_token(self, cache_key: str) -> TokenResponse:
         # Read raw content
         try:
-            with open(self.get_cache_path(cache_key)) as cache_file:
+            with open(self.get_cache_path(cache_key), encoding=self.cache_encoding) as cache_file:
                 content = cache_file.read().splitlines()
         except Exception as err:
-            raise CacheError(err,
-                f"Cache file {cache_key} does not exist or issues while reading it") from err
+            raise CacheError(
+                err, f"Cache file {cache_key} does not exist or issues while reading it"
+            ) from err
 
         # Decrypt content
         try:
             content_dict = loads(self.encryptor.decrypt(content[0].encode(self.cache_encoding)))
-            token = self.token_response_class(**content_dict)
+            token = self.token_response_class(**content_dict)  # type: ignore
             return token
         except InvalidToken as err:
-            raise CacheError(err,
-                "Issue while decrypting cache content. Please check if the file is corrupted.") \
-                from err
+            raise CacheError(
+                err,
+                "Issue while decrypting cache content. Please check if the file is corrupted.",
+            ) from err
         except IndexError as err:
             raise CacheError(err, f"Issues while reading cache {cache_key}") from err
         except (TypeError, JSONDecodeError) as err:
-            raise CacheError(err, "Malformed cache token. Please check if the file is corrupted.") \
-                from err
+            raise CacheError(err, "Malformed cache token. Please check if the file is corrupted.") from err
 
     def cache_auth_token(self, cache_key: str, token: TokenResponse) -> None:
         try:
-            with open(self.get_cache_path(cache_key), 'w') as cache_file:
-                serialized_unencrypted_token_bytes = \
-                    dumps(token.__dict__).encode(self.cache_encoding)
-                serialized_encrypted_token_bytes = \
-                    self.encryptor.encrypt(serialized_unencrypted_token_bytes)
-                serialized_encrypted_token = \
-                    serialized_encrypted_token_bytes.decode(self.cache_encoding)
+            with open(self.get_cache_path(cache_key), encoding=self.cache_encoding, mode="w") as cache_file:
+                serialized_unencrypted_token_bytes = dumps(token.__dict__).encode(self.cache_encoding)
+                serialized_encrypted_token_bytes = self.encryptor.encrypt(serialized_unencrypted_token_bytes)
+                serialized_encrypted_token = serialized_encrypted_token_bytes.decode(self.cache_encoding)
                 cache_file.write(serialized_encrypted_token)
         except Exception as err:
             raise CacheError(err, f"Issues while writing cache to {cache_key}") from err
@@ -237,11 +246,13 @@ class CacheableTokenAuth:
         """Cache key which will be used to store the token
 
         Returns:
-            String reprensentation of the cache key
+            String representation of the cache key
         """
+
 
 class Cache:
     """Decorator for leveraging token caching on a function which fetches a token"""
+
     def __init__(self, token_response_type) -> None:
         self.token_response_type = token_response_type
 
@@ -256,16 +267,23 @@ class Cache:
         Raises:
             GetAuthTokenError if there was an issue while getting the token.
         """
+
         @wraps(fetch_func)
-        def wrapper(token_auth: CacheableTokenAuth, *args, **kwargs)  -> self.token_response_type:
+        def wrapper(
+            token_auth: CacheableTokenAuth, *args, **kwargs
+        ) -> self.token_response_type:  # type: ignore
             # Attempt to retrieve a cached access token
             if isinstance(token_auth.token_cache_strategy, TokenCacheStrategy):
                 try:
-                    token = token_auth.token_cache_strategy.get_cached_auth_token(
-                                                                token_auth.get_cache_key())
+                    token = token_auth.token_cache_strategy.get_cached_auth_token(token_auth.get_cache_key())
                     if token.is_valid():
-                        LOG.info("%s: %s", "Using cached token from cache key",
-                            token_auth.get_cache_key())
+
+                        LOG.info(
+                            "%s: %s",
+                            "Using cached token from cache key",
+                            token_auth.get_cache_key(),
+                        )
+
                         return token
 
                     LOG.info("Acquiring new token: cached token has expired.")
@@ -273,8 +291,10 @@ class Cache:
                     if isinstance(err.raised_from, FileNotFoundError):
                         LOG.info("Acquiring new token: No cache found")
                     else:
-                        LOG.warning(("Acquiring new token: Issue while reading the cached token."
-                              " Reason %s"), repr(err))
+                        LOG.warning(
+                            "Acquiring new token: Issue while reading the cached token." " Reason %s",
+                            repr(err),
+                        )
 
             try:
                 token = fetch_func(token_auth, *args, **kwargs)
@@ -285,11 +305,13 @@ class Cache:
             if isinstance(token_auth.token_cache_strategy, TokenCacheStrategy):
                 # Cache the token
                 try:
-                    token_auth.token_cache_strategy.cache_auth_token(
-                                                        token_auth.get_cache_key(), token)
+                    token_auth.token_cache_strategy.cache_auth_token(token_auth.get_cache_key(), token)
                 except CacheError as err:
-                    LOG.warning("%s: %s", "Failed to cache authentication token. Reason: ",
-                            repr(err))
+                    LOG.warning(
+                        "%s: %s",
+                        "Failed to cache authentication token. Reason: ",
+                        repr(err),
+                    )
             return token
 
         return wrapper

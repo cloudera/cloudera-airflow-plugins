@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -33,10 +33,7 @@
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
 
-
-"""
-cdpcurl implementation
-"""
+"""cdpcurl implementation."""
 import datetime
 import pprint
 import sys
@@ -45,7 +42,7 @@ from email.utils import formatdate
 from cloudera.cdp.security import submit_request
 from cloudera.cdp.security.cdp_requests.cdpv1sign import make_signature_header
 
-__author__ = 'cloudera'
+__author__ = "cloudera"
 
 IS_VERBOSE = False
 
@@ -60,15 +57,9 @@ def __log(*args, **kwargs):
 def __now():
     return datetime.datetime.now(datetime.timezone.utc)
 
+
 # pylint: disable=too-many-arguments,too-many-locals
-def make_request(method,
-                 uri,
-                 headers,
-                 data,
-                 access_key,
-                 private_key,
-                 data_binary,
-                 verify=True):
+def make_request(method, uri, headers, data, access_key, private_key, data_binary, verify=True):
     """
     # Make HTTP request with CDP request signing
 
@@ -84,31 +75,28 @@ def make_request(method,
     :param verify: bool
     """
 
-    if 'x-altus-auth' in headers:
+    if "x-altus-auth" in headers:
         raise Exception("x-altus-auth found in headers!")
-    if 'x-altus-date' in headers:
+    if "x-altus-date" in headers:
         raise Exception("x-altus-date found in headers!")
-    headers['x-altus-date'] = formatdate(timeval=__now().timestamp(),
-                                         usegmt=True)
-    headers['x-altus-auth'] = make_signature_header(method, uri, headers,
-                                                    access_key, private_key)
+    headers["x-altus-date"] = formatdate(timeval=__now().timestamp(), usegmt=True)
+    headers["x-altus-auth"] = make_signature_header(method, uri, headers, access_key, private_key)
 
     if data_binary:
         return __send_request(uri, data, headers, method, verify)
-    return __send_request(uri, data.encode('utf-8'), headers, method, verify)
+    return __send_request(uri, data.encode("utf-8"), headers, method, verify)
 
 
 def __send_request(uri, data, headers, method, verify):
-    __log('\nHEADERS++++++++++++++++++++++++++++++++++++')
+    __log("\nHEADERS++++++++++++++++++++++++++++++++++++")
     __log(headers)
 
-    __log('\nBEGIN REQUEST++++++++++++++++++++++++++++++++++++')
-    __log('Request URL = ' + uri)
+    __log("\nBEGIN REQUEST++++++++++++++++++++++++++++++++++++")
+    __log("Request URL = " + uri)
 
-    response = submit_request(method, uri, headers=headers, data=data,
-                                verify=verify)
+    response = submit_request(method, uri, headers=headers, data=data, verify=verify)
 
-    __log('\nRESPONSE++++++++++++++++++++++++++++++++++++')
-    __log('Response code: %d\n' % response.status_code)
+    __log("\nRESPONSE++++++++++++++++++++++++++++++++++++")
+    __log("Response code: %d\n" % response.status_code)
 
     return response

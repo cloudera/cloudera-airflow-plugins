@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -34,23 +34,32 @@
 #  DATA.
 
 """Security module for handling authentication to Cloudera Services"""
+import logging
+
 from abc import ABC, abstractmethod
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Optional
 
 import requests
-from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
-                      wait_exponential)
-from airflow.utils.log.logging_mixin import LoggingMixin  # type: ignore
-from cloudera.cdp.airflow.hooks import CDPHookException
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-LOG = LoggingMixin().log
+LOG = logging.getLogger(__name__)
 
-class SecurityError(CDPHookException):
+
+class SecurityError(Exception):
     """Root security exception, to be used to catch any security issue"""
+
+    def __init__(self, raised_from: Optional[Exception] = None, msg: Optional[str] = None) -> None:
+        super().__init__(raised_from, msg)
+        self.raised_from = raised_from
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
 
 class TokenResponse(ABC):
     """Base class for token responses"""
+
     @abstractmethod
     def is_valid(self) -> bool:
         """Check if token is still valid
@@ -59,39 +68,45 @@ class TokenResponse(ABC):
         """
         raise NotImplementedError
 
+
 class ClientError(requests.exceptions.HTTPError):
     """When request fails because of a Client side error"""
+
 
 class ServerError(requests.exceptions.HTTPError):
     """When request fails because of an Internal/Server side error"""
 
+
 ALWAYS_RETRY_EXCEPTIONS = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
-    ServerError
+    ServerError,
 )
 
-@retry( wait=wait_exponential(),
-        stop=stop_after_attempt(3),
-        retry=retry_if_exception_type(ALWAYS_RETRY_EXCEPTIONS),
-        reraise=True)
+
+@retry(
+    wait=wait_exponential(),
+    stop=stop_after_attempt(3),
+    retry=retry_if_exception_type(ALWAYS_RETRY_EXCEPTIONS),
+    reraise=True,
+)
 def submit_request(method, uri, *args: Any, **kw_args) -> requests.Response:
     """
     Helper method for submitting HTTP request and handling common errors
     Args:
-        method: http method, GET, POST, etc.
-        uri: endpoint of the requests
-        args: arguments given to the function
-        kw_args: keywoard arguments given to the function
+    method: http method, GET, POST, etc.
+    uri: endpoint of the requests
+    args: arguments given to the function
+    kw_args: keyword arguments given to the function
 
     Returns:
-        Response of the http request
+    Response of the http request
 
     Raises:
-        ClientError if reponse status code is 4xx
-        ServerError if reponse status code is 5xx
-        corresponding issued requests.exceptions.RequestException if requests throws an error and
-            cannot complete successfully
+    ClientError if response status code is 4xx
+    ServerError if response status code is 5xx
+    corresponding issued requests.exceptions.RequestException if requests throws an error and
+    cannot complete successfully
     """
     try:
         LOG.debug("Issuing request: %s %s", method, uri)

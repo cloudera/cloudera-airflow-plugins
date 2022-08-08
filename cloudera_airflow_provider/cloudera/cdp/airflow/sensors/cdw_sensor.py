@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -32,46 +32,14 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.sensors.cdw_sensor`."""
 
-from airflow.sensors.hive_partition_sensor import HivePartitionSensor
-from airflow.utils.decorators import apply_defaults
-from cloudera.cdp.airflow.hooks.cdw_hook import CDWHiveMetastoreHook
+import warnings
 
+from cloudera.airflow.providers.sensors.cdw_sensor import CdwHivePartitionSensor as CDWHivePartitionSensor # pylint: disable=unused-import
 
-class CDWHivePartitionSensor(HivePartitionSensor):
-    """
-    CDWHivePartitionSensor is a subclass of HivePartitionSensor and supposed to implement
-    the same logic by delegating the actual work to a CDWHiveMetastoreHook instance.
-    """
-    template_fields = ('schema', 'table', 'partition',)
-    ui_color = '#C5CAE9'
-
-    @apply_defaults
-    def __init__(self,
-                 table, partition="ds='{{ ds }}'",
-                 cli_conn_id='metastore_default',
-                 schema='default',
-                 poke_interval=60 * 3,
-                 *args,
-                 **kwargs):
-        super().__init__(
-            table=table, poke_interval=poke_interval, *args, **kwargs)
-        if not partition:
-            partition = "ds='{{ ds }}'"
-        self.cli_conn_id = cli_conn_id
-        self.table = table
-        self.partition = partition
-        self.schema = schema
-        self.hook = None
-
-    def poke(self, context):
-        if '.' in self.table:
-            self.schema, self.table = self.table.split('.')
-        self.log.info(
-            'Poking for table %s.%s, partition %s', self.schema, self.table, self.partition
-        )
-        if self.hook is None:
-            self.hook = CDWHiveMetastoreHook(
-                cli_conn_id=self.cli_conn_id)
-        return self.hook.check_for_partition(
-            self.schema, self.table, self.partition)
+warnings.warn(
+    "This module is deprecated. Please use `cloudera.airflow.providers.sensors.cdw_sensor`.",
+    DeprecationWarning,
+    stacklevel=2,
+)
