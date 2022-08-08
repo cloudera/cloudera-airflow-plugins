@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -32,85 +32,14 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.operators.cdw_operator`."""
 
+import warnings
 
-from __future__ import unicode_literals
+from cloudera.airflow.providers.operators.cdw_operator import CdwExecuteQueryOperator as CDWOperator # pylint: disable=unused-import
 
-import re
-
-from airflow.models import BaseOperator
-from airflow.utils.decorators import apply_defaults
-from airflow.utils.operator_helpers import context_to_airflow_vars
-from cloudera.cdp.airflow.hooks.cdw_hook import CDWHook
-
-class CDWOperator(BaseOperator):
-    """
-    Executes hql code in CDW. This class inherits behavior
-    from HiveOperator, and instantiates a CDWHook to do the work.
-    """
-    template_fields = ('hql', 'schema', 'hiveconfs')
-    template_ext = ('.hql', '.sql',)
-    ui_color = '#522a9f'
-    ui_fgcolor = '#fff'
-
-    @apply_defaults
-    def __init__(
-            self, hql,
-            schema='default',
-            hiveconfs=None,
-            hiveconf_jinja_translate=False,
-            cli_conn_id="hive_cli_default",
-            jdbc_driver=None,
-            #new CDW args
-            use_proxy_user=False, # pylint: disable=unused-argument
-            query_isolation=True, # TODO: implement
-            *args, **kwargs):
-
-        super().__init__(*args, **kwargs)
-        self.hql = hql
-        self.schema = schema
-        self.hiveconfs = hiveconfs or {}
-        self.hiveconf_jinja_translate = hiveconf_jinja_translate
-        self.run_as = None
-        self.cli_conn_id = cli_conn_id
-        self.jdbc_driver = jdbc_driver
-        self.query_isolation = query_isolation
-        # assigned lazily - just for consistency we can create the attribute with a
-        # `None` initial value, later it will be populated by the execute method.
-        # This also makes `on_kill` implementation consistent since it assumes `self.hook`
-        # is defined.
-        self.hook = None
-
-    def get_hook(self):
-        """
-        Simply returns a CDWHook with the provided hive cli connection.
-        """
-        return CDWHook(
-            cli_conn_id=self.cli_conn_id,
-            query_isolation=self.query_isolation,
-            jdbc_driver=self.jdbc_driver)
-
-    def prepare_template(self):
-        if self.hiveconf_jinja_translate:
-            self.hql = re.sub(
-                r"(\$\{(hiveconf:)?([ a-zA-Z0-9_]*)\})", r"{{ \g<3> }}", self.hql)
-
-    def execute(self, context):
-        self.log.info('Executing: %s', self.hql)
-        self.hook = self.get_hook()
-
-        if self.hiveconf_jinja_translate:
-            self.hiveconfs = context_to_airflow_vars(context)
-        else:
-            self.hiveconfs.update(context_to_airflow_vars(context))
-
-        self.log.info('Passing HiveConf: %s', self.hiveconfs)
-        self.hook.run_cli(hql=self.hql, schema=self.schema, hive_conf=self.hiveconfs)
-
-    def dry_run(self):
-        self.hook = self.get_hook()
-        self.hook.test_hql(hql=self.hql)
-
-    def on_kill(self):
-        if self.hook:
-            self.hook.kill()
+warnings.warn(
+    "This module is deprecated. Please use `cloudera.airflow.providers.operators.cdw_operator`.",
+    DeprecationWarning,
+    stacklevel=2,
+)

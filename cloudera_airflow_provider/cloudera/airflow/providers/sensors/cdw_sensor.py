@@ -1,5 +1,5 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2021
+#  (C) Cloudera, Inc. 2021-2022
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
@@ -33,15 +33,51 @@
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
 
-from cloudera.cdp.airflow.hooks.cdw_hook import CDWHiveMetastoreHook
+from airflow.providers.apache.hive.sensors.hive_partition import HivePartitionSensor   # type: ignore
+from cloudera.airflow.providers.hooks.cdw_hook import CdwHiveMetastoreHook
 
-def test_csv_parse():
-    """
-    This is just simple validation test for csv reader. The variable beeline_output
-    contains a sample response which comes from hive in case of --outputformat=csv2.
-    """
-    beeline_output = ("db_name,tbl_name,part_name\n"
-                       "default,test_part,dt=1")
-    result_list = CDWHiveMetastoreHook.parse_csv_lines(beeline_output)
 
-    assert len(result_list) == 2, result_list
+class CdwHivePartitionSensor(HivePartitionSensor):
+    """
+    CdwHivePartitionSensor is a subclass of HivePartitionSensor and supposed to implement
+    the same logic by delegating the actual work to a CdwHiveMetastoreHook instance.
+    """
+
+    template_fields = (
+        "schema",
+        "table",
+        "partition",
+    )
+    ui_color = "#C5CAE9"
+
+    def __init__(
+        self,
+        table,
+        partition="ds='{{ ds }}'",
+        cli_conn_id="metastore_default",
+        schema="default",
+        poke_interval=60 * 3,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(table=table, poke_interval=poke_interval, *args, **kwargs)
+        if not partition:
+            partition = "ds='{{ ds }}'"
+        self.cli_conn_id = cli_conn_id
+        self.table = table
+        self.partition = partition
+        self.schema = schema
+        self.hook = None
+
+    def poke(self, context):
+        if "." in self.table:
+            self.schema, self.table = self.table.split(".")
+        self.log.info(
+            "Poking for table %s.%s, partition %s",
+            self.schema,
+            self.table,
+            self.partition,
+        )
+        if self.hook is None:
+            self.hook = CdwHiveMetastoreHook(cli_conn_id=self.cli_conn_id)
+        return self.hook.check_for_partition(self.schema, self.table, self.partition)

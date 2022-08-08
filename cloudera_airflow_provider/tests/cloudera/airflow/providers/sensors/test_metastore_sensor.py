@@ -32,17 +32,16 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
-"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.hooks.cde_hook`."""
 
-import warnings
+from cloudera.airflow.providers.hooks.cdw_hook import CdwHiveMetastoreHook
 
-from cloudera.airflow.providers.hooks.cde_hook import ( # pylint: disable=unused-import
-    CdeHookException as CDEHookException,
-    CdeHook as CDEHook, RetryHandler
-)
 
-warnings.warn(
-    "This module is deprecated. Please use `cloudera.airflow.providers.hooks.cde_hook`.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+def test_csv_parse():
+    """
+    This is just simple validation test for csv reader. The variable beeline_output
+    contains a sample response which comes from hive in case of --outputformat=csv2.
+    """
+    beeline_output = "db_name,tbl_name,part_name\n" "default,test_part,dt=1"
+    result_list = CdwHiveMetastoreHook.parse_csv_lines(beeline_output)
+
+    assert len(result_list) == 2, result_list
