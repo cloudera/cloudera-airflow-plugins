@@ -1,5 +1,13 @@
+.idea/
+venv/
+.tox/
+dist/
+*.egg-info
+.eggs/
+build/
+AUTHORS
+ChangeLog
 .DS_Store
-
 .pytest_cache/
 __pycache__/
 *.pyc
@@ -7,5 +15,3 @@ htmlcov/
 .coverage
 .python-version
 .mypy_cache
-
-.idea/
