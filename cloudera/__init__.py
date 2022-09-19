@@ -32,27 +32,3 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
-
-"""Helper function for the package installation"""
-
-def get_provider_info(): # pragma: no cover , metadata only used for building
-    """Provides required metadata for the entrypoint in the setup.cfg"""
-    return {
-        "package-name": "cloudera-airflow-provider",
-        "name": "Cloudera Airflow Provider",
-        "description": """Provides Operators for running jobs on CDE and CDW.
-Notes:
-    - For Airflow 2.x a new dedicated connection type for CDE is available in the UI""",
-        # hook-class-names is deprecated as of Airflow 2.2.0, keeping it for backwards compatibility with older versions
-        # https://airflow.apache.org/docs/apache-airflow-providers/index.html#how-to-create-your-own-provider
-        "hook-class-names": [
-            "cloudera.airflow.providers.hooks.cde_hook.CdeHook",
-        ],
-        "connection-types": [
-            {
-                "hook-class-name": "cloudera.airflow.providers.hooks.cde_hook.CdeHook",
-                "connection-type": "cloudera_data_engineering"
-            }
-        ],
-        "versions": ["1.0.2", "1.0.1", "1.0.0"]
-    }
