@@ -33,35 +33,53 @@
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
 
-"""Utils module for common utility methods used in the tests"""
-from itertools import tee
-from json import dumps
-from typing import Dict, Any, Tuple, Iterable, Optional
+from __future__ import annotations
 
-from requests import Response
+from airflow.providers.apache.hive.sensors.hive_partition import HivePartitionSensor  # type: ignore
+from cloudera.airflow.providers.hooks.cdw import CdwHiveMetastoreHook
 
 
-def iter_len_plus_one(iterator: Iterable) -> int:
-    """Return the length + 1 of the given iterator.
-    The +1 is because in the tests the first side effect is already consumed"""
-    return sum(1 for _ in tee(iterator)) + 1
+class CdwHivePartitionSensor(HivePartitionSensor):
+    """
+    CdwHivePartitionSensor is a subclass of HivePartitionSensor and supposed to implement
+    the same logic by delegating the actual work to a CdwHiveMetastoreHook instance.
+    """
 
+    template_fields = (
+        "schema",
+        "table",
+        "partition",
+    )
+    ui_color = "#C5CAE9"
 
-def _get_call_arguments(self: Tuple) -> Dict[str, Any]:
-    if len(self) == 2:
-        # returned tuple is args, kwargs = self
-        _, kwargs = self
-    else:
-        # returned tuple is name, args, kwargs = self
-        _, _, kwargs = self
+    def __init__(
+        self,
+        table,
+        partition="ds='{{ ds }}'",
+        cli_conn_id="metastore_default",
+        schema="default",
+        poke_interval=60 * 3,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(table=table, poke_interval=poke_interval, *args, **kwargs)
+        if not partition:
+            partition = "ds='{{ ds }}'"
+        self.cli_conn_id = cli_conn_id
+        self.table = table
+        self.partition = partition
+        self.schema = schema
+        self.hook = None
 
-    return kwargs
-
-
-def _make_response(status: int, body: Optional[dict], reason: str) -> Response:
-    resp = Response()
-    resp.status_code = status
-    resp.encoding = 'utf-8'
-    resp._content = dumps(body).encode('utf-8')
-    resp.reason = reason
-    return resp
+    def poke(self, context):
+        if "." in self.table:
+            self.schema, self.table = self.table.split(".")
+        self.log.info(
+            "Poking for table %s.%s, partition %s",
+            self.schema,
+            self.table,
+            self.partition,
+        )
+        if self.hook is None:
+            self.hook = CdwHiveMetastoreHook(cli_conn_id=self.cli_conn_id)
+        return self.hook.check_for_partition(self.schema, self.table, self.partition)

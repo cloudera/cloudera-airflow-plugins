@@ -36,8 +36,9 @@
 
 import warnings
 
-from cloudera.airflow.providers.model.connection import CdeConnection as CDEConnection # pylint: disable=unused-import
-
+from cloudera.airflow.providers.model.connection import (  # pylint: disable=unused-import # noqa:F401
+    CdeConnection as CDEConnection,
+)
 
 warnings.warn(
     "This module is deprecated. Please use `cloudera.airflow.providers.model.connection`.",

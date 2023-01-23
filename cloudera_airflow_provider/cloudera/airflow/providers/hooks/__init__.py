@@ -33,13 +33,13 @@
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
 """Covers root exception for CDP hooks"""
-from typing import Optional
+from __future__ import annotations
 
 
 class CdpHookException(Exception):
     """Root exception for custom Cloudera hooks, which is used to handle any known exceptions"""
 
-    def __init__(self, raised_from: Optional[Exception] = None, msg: Optional[str] = None) -> None:
+    def __init__(self, raised_from: Exception | None = None, msg: str | None = None) -> None:
         super().__init__(raised_from, msg)
         self.raised_from = raised_from
 

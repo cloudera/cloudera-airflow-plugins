@@ -33,26 +33,17 @@
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
 
-"""Helper function for the package installation"""
+from __future__ import annotations
 
-def get_provider_info(): # pragma: no cover , metadata only used for building
-    """Provides required metadata for the entrypoint in the setup.cfg"""
-    return {
-        "package-name": "cloudera-airflow-provider",
-        "name": "Cloudera Airflow Provider",
-        "description": """Provides Operators for running jobs on CDE and CDW.
-Notes:
-    - For Airflow 2.x a new dedicated connection type for CDE is available in the UI""",
-        # hook-class-names is deprecated as of Airflow 2.2.0, keeping it for backwards compatibility with older versions
-        # https://airflow.apache.org/docs/apache-airflow-providers/index.html#how-to-create-your-own-provider
-        "hook-class-names": [
-            "cloudera.airflow.providers.hooks.cde_hook.CdeHook",
-        ],
-        "connection-types": [
-            {
-                "hook-class-name": "cloudera.airflow.providers.hooks.cde_hook.CdeHook",
-                "connection-type": "cloudera_data_engineering"
-            }
-        ],
-        "versions": ["1.0.2", "1.0.1", "1.0.0"]
-    }
+from cloudera.airflow.providers.hooks.cdw import CdwHiveMetastoreHook
+
+
+def test_csv_parse():
+    """
+    This is just simple validation test for csv reader. The variable beeline_output
+    contains a sample response which comes from hive in case of --outputformat=csv2.
+    """
+    beeline_output = "db_name,tbl_name,part_name\ndefault,test_part,dt=1"
+    result_list = CdwHiveMetastoreHook.parse_csv_lines(beeline_output)
+
+    assert len(result_list) == 2, result_list

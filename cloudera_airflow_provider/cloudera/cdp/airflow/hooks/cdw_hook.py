@@ -32,18 +32,18 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
-"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.hooks.cdw_hook`."""
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.hooks.cdw`."""
 
 import warnings
 
-from cloudera.airflow.providers.hooks.cdw_hook import ( # pylint: disable=unused-import
-    CdwHook as CDWHook,
+from cloudera.airflow.providers.hooks.cdw import (  # pylint: disable=unused-import     # noqa:F401
     CdwHiveMetastoreHook as CDWHiveMetastoreHook,
-    get_context_from_env_var
+    CdwHook as CDWHook,
+    get_context_from_env_var,
 )
 
 warnings.warn(
-    "This module is deprecated. Please use `cloudera.airflow.providers.hooks.cdw_hook`.",
+    "This module is deprecated. Please use `cloudera.airflow.providers.hooks.cdw`.",
     DeprecationWarning,
     stacklevel=2,
 )
