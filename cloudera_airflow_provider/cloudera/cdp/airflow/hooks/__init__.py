@@ -36,7 +36,9 @@
 
 import warnings
 
-from cloudera.airflow.providers.hooks import CdpHookException as CDPHookException # pylint: disable=unused-import
+from cloudera.airflow.providers.hooks import (  # pylint: disable=unused-import     # noqa:F401
+    CdpHookException as CDPHookException,
+)
 
 warnings.warn(
     "This module is deprecated. Please use `cloudera.airflow.providers.hooks`.",

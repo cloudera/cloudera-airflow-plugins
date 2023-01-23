@@ -32,14 +32,16 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
-"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.sensors.cdw_sensor`."""
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.sensors.cdw`."""
 
 import warnings
 
-from cloudera.airflow.providers.sensors.cdw_sensor import CdwHivePartitionSensor as CDWHivePartitionSensor # pylint: disable=unused-import
+from cloudera.airflow.providers.sensors.cdw import (  # pylint: disable=unused-import     # noqa:F401
+    CdwHivePartitionSensor as CDWHivePartitionSensor,
+)
 
 warnings.warn(
-    "This module is deprecated. Please use `cloudera.airflow.providers.sensors.cdw_sensor`.",
+    "This module is deprecated. Please use `cloudera.airflow.providers.sensors.cdw`.",
     DeprecationWarning,
     stacklevel=2,
 )

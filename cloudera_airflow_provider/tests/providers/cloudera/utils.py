@@ -33,33 +33,47 @@
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
 
-"""Helper function for the package installation"""
+"""Utils module for common utility methods used in the tests"""
+from __future__ import annotations
+
+from itertools import tee
+from json import dumps
+from typing import Any, Iterable
+
+from requests import Response
 
 
-def get_provider_info():  # pragma: no cover , metadata only used for building
-    """Provides required metadata for the entrypoint in the setup.cfg"""
-    return {
-        "package-name": "cloudera-airflow-provider",
-        "name": ("Cloudera Airflow Provider"),
-        "description": """Provides Operators for running jobs on CDE and CDW.
-Notes:
-    - For Airflow 2.x a new dedicated connection type for CDE is available in the UI""",
-        # hook-class-names is deprecated as of Airflow 2.2.0, keeping it for backwards compatibility with older versions
-        # https://airflow.apache.org/docs/apache-airflow-providers/index.html#how-to-create-your-own-provider
-        "hook-class-names": [
-            "cloudera.airflow.providers.hooks.cde.CdeHook",
-        ],
-        "connection-types": [
-            {
-                "hook-class-name": "cloudera.airflow.providers.hooks.cde.CdeHook",
-                "connection-type": "cloudera_data_engineering",
-            }
-        ],
-        "versions": [
-            "2.0.0",
-            "1.1.0",
-            "1.0.2",
-            "1.0.1",
-            "1.0.0",
-        ],
-    }
+def iter_len_plus_one(iterator: Iterable) -> int:
+    """Return the length + 1 of the given iterator.
+    The +1 is because in the tests the first side effect is already consumed"""
+    return sum(1 for _ in tee(iterator)) + 1
+
+
+def _get_call_arguments(self: tuple) -> dict[str, Any]:
+    if len(self) == 2:
+        # returned tuple is args, kwargs = self
+        _, kwargs = self
+    else:
+        # returned tuple is name, args, kwargs = self
+        _, _, kwargs = self
+
+    return kwargs
+
+
+def _make_response(status: int, body, reason: str) -> Response:
+    content = (
+        b""
+        if body == b""
+        else None
+        if body is None
+        else dumps(body).encode("utf-8")
+        if isinstance(body, dict)
+        else body.encode("utf-8")
+    )
+
+    resp = Response()
+    resp.status_code = status
+    resp.encoding = "utf-8"
+    resp._content = content
+    resp.reason = reason
+    return resp

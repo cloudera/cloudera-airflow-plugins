@@ -32,52 +32,16 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.sensors.cdw`."""
 
-from airflow.providers.apache.hive.sensors.hive_partition import HivePartitionSensor   # type: ignore
-from cloudera.airflow.providers.hooks.cdw_hook import CdwHiveMetastoreHook
+import warnings
 
+from cloudera.airflow.providers.sensors.cdw import (  # pylint: disable=unused-import     # noqa:F401
+    CdwHivePartitionSensor,
+)
 
-class CdwHivePartitionSensor(HivePartitionSensor):
-    """
-    CdwHivePartitionSensor is a subclass of HivePartitionSensor and supposed to implement
-    the same logic by delegating the actual work to a CdwHiveMetastoreHook instance.
-    """
-
-    template_fields = (
-        "schema",
-        "table",
-        "partition",
-    )
-    ui_color = "#C5CAE9"
-
-    def __init__(
-        self,
-        table,
-        partition="ds='{{ ds }}'",
-        cli_conn_id="metastore_default",
-        schema="default",
-        poke_interval=60 * 3,
-        *args,
-        **kwargs,
-    ):
-        super().__init__(table=table, poke_interval=poke_interval, *args, **kwargs)
-        if not partition:
-            partition = "ds='{{ ds }}'"
-        self.cli_conn_id = cli_conn_id
-        self.table = table
-        self.partition = partition
-        self.schema = schema
-        self.hook = None
-
-    def poke(self, context):
-        if "." in self.table:
-            self.schema, self.table = self.table.split(".")
-        self.log.info(
-            "Poking for table %s.%s, partition %s",
-            self.schema,
-            self.table,
-            self.partition,
-        )
-        if self.hook is None:
-            self.hook = CdwHiveMetastoreHook(cli_conn_id=self.cli_conn_id)
-        return self.hook.check_for_partition(self.schema, self.table, self.partition)
+warnings.warn(
+    "This module is deprecated. Please use `cloudera.airflow.providers.sensors.cdw`.",
+    DeprecationWarning,
+    stacklevel=2,
+)

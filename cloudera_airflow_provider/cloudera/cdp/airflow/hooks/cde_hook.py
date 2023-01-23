@@ -32,17 +32,18 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
-"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.hooks.cde_hook`."""
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.hooks.cde`."""
 
 import warnings
 
-from cloudera.airflow.providers.hooks.cde_hook import ( # pylint: disable=unused-import
+from cloudera.airflow.providers.hooks.cde import (  # pylint: disable=unused-import # noqa:F401
+    CdeHook as CDEHook,
     CdeHookException as CDEHookException,
-    CdeHook as CDEHook, RetryHandler
+    RetryHandler,
 )
 
 warnings.warn(
-    "This module is deprecated. Please use `cloudera.airflow.providers.hooks.cde_hook`.",
+    "This module is deprecated. Please use `cloudera.airflow.providers.hooks.cde`.",
     DeprecationWarning,
     stacklevel=2,
 )

@@ -34,12 +34,17 @@
 #  DATA.
 """Holds connections for the Cloudera Products"""
 
+from __future__ import annotations
+
 import json
+import logging
 from json.decoder import JSONDecodeError
-from typing import Optional
 from urllib.parse import urlparse
 
 from airflow.models.connection import Connection
+from airflow.utils.session import provide_session
+
+LOG = logging.getLogger(__name__)
 
 
 class CdeConnection(Connection):
@@ -47,7 +52,7 @@ class CdeConnection(Connection):
 
     CDE_API_PREFIX = "/api/v1"
 
-    def __init__( # pylint: disable=too-many-arguments
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         connection_id: str,
         scheme: str,
@@ -55,13 +60,14 @@ class CdeConnection(Connection):
         api_base_route: str,
         access_key: str,
         private_key: str,
-        port: Optional[int] = None,
-        cache_dir: Optional[str] = None,
-        ca_cert_path: Optional[str] = None,
-        proxy: Optional[str] = None,
-        cdp_endpoint: Optional[str] = None,
-        altus_iam_endpoint: Optional[str] = None,
+        port: int | None = None,
+        cache_dir: str | None = None,
+        ca_cert_path: str | None = None,
+        proxy: str | None = None,
+        cdp_endpoint: str | None = None,
+        altus_iam_endpoint: str | None = None,
         insecure: bool = False,
+        region: str | None = None,
     ) -> None:
         super().__init__(
             conn_id=connection_id,
@@ -79,6 +85,7 @@ class CdeConnection(Connection):
         self.cdp_endpoint = cdp_endpoint
         self.altus_iam_endpoint = altus_iam_endpoint
         self.insecure = insecure
+        self.region = region
 
     def is_external(self) -> bool:
         """Checks if connection is external. External connections
@@ -106,12 +113,27 @@ class CdeConnection(Connection):
         Returns:
             vcluster_jobs_api_url: the jobs api url
         """
-
         vcluster_jobs_api_url = f"{self.scheme}://{self.host}"
         if self.port:
             vcluster_jobs_api_url += ":" + str(self.port)
         vcluster_jobs_api_url += self.api_base_route
         return vcluster_jobs_api_url
+
+    @provide_session
+    def save_region(self, region: str, session=None):
+        """Save region, so that any subsequent calls would not need to infer it again."""
+        self.region = region
+        connection = session.query(Connection).filter_by(conn_id=self.conn_id).one_or_none()
+        if not connection:
+            LOG.warning(
+                "Can not save region. The connection with connection_id: %s was not found", self.conn_id
+            )
+            return
+        extra = json.loads(connection.extra) if connection.extra else {}
+        extra["region"] = region
+        connection.set_extra(json.dumps(extra))
+        session.add(connection)
+        session.commit()
 
     @property
     def access_key(self) -> str:
@@ -138,7 +160,7 @@ class CdeConnection(Connection):
         return hostname.endswith(".svc") or hostname.endswith(".svc.cluster.local")
 
     @classmethod
-    def from_airflow_connection(cls, conn: Connection) -> "CdeConnection":
+    def from_airflow_connection(cls, conn: Connection) -> CdeConnection:
         """Factory method for constructing a CDE connection from an Airflow Connection.
 
         Args:
@@ -179,6 +201,7 @@ class CdeConnection(Connection):
             cdp_endpoint=extra.get("cdp_endpoint"),
             altus_iam_endpoint=extra.get("altus_iam_endpoint"),
             insecure=extra.get("insecure", False),
+            region=extra.get("region"),
         )
 
     def __repr__(self) -> str:

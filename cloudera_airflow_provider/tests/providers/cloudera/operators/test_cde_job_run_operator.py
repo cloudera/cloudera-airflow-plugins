@@ -35,56 +35,68 @@
 
 """Tests related to the CDE Job operator"""
 
+from __future__ import annotations
+
 import unittest
 from datetime import datetime
 from unittest import mock
 from unittest.mock import Mock, call
 
 from airflow.exceptions import AirflowException
+from airflow.models.baseoperator import BaseOperator
 from airflow.models.connection import Connection
 from airflow.models.dag import DAG
-from cloudera.airflow.providers.hooks.cde_hook import CdeHook
-from cloudera.airflow.providers.operators.cde_operator import CdeRunJobOperator
-from tests.utils import _get_call_arguments
+from airflow.models.taskinstance import TaskInstance
+from cloudera.airflow.providers.hooks.cde import CdeHook
+from cloudera.airflow.providers.operators.cde import FORMAT_DATE_TIME, CdeRunJobOperator
+from tests.providers.cloudera.utils import _get_call_arguments
 
-TEST_JOB_NAME = 'testjob'
+TEST_JOB_NAME = "testjob"
 TEST_JOB_RUN_ID = 10
+TEST_AIRFLOW_DAG_ID = "dag_1"
+TEST_AIRFLOW_RUN_ID = "run_1"
+TEST_AIRFLOW_RUN_EXECUTION_DATE = datetime.now()
+TEST_AIRFLOW_TASK_ID = "task_1"
 TEST_TIMEOUT = 4
 TEST_JOB_POLL_INTERVAL = 1
 TEST_API_RETRIES = 3
 TEST_API_TIMEOUT = 5
-TEST_VARIABLES = {'var1': 'someval_{{ ds_nodash }}'}
-TEST_OVERRIDES = {'spark': {'conf': {'myparam': 'val_{{ ds_nodash }}'}}}
+TEST_VARIABLES = {"var1": "someval_{{ ds_nodash }}"}
+TEST_OVERRIDES = {"spark": {"conf": {"myparam": "val_{{ ds_nodash }}"}}}
 TEST_CONTEXT = {
-    'ds': '2020-11-25',
-    'ds_nodash': '20201125',
-    'ts': '2020-11-25T00:00:00+00:00',
-    'ts_nodash': '20201125T000000',
-    'run_id': 'runid',
+    "ds": "2020-11-25",
+    "ds_nodash": "20201125",
+    "ts": "2020-11-25T00:00:00+00:00",
+    "ts_nodash": "20201125T000000",
+    "run_id": TEST_AIRFLOW_RUN_ID,
 }
-
-TEST_HOST = 'vc1.cde-2.cdp-3.cloudera.site'
-TEST_SCHEME = 'http'
+# for airflow < 2.2.0 there's no run_id, so we use execution_date instead
+VALID_REQUEST_IDS = [
+    f"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_ID}#{TEST_AIRFLOW_TASK_ID}#1",
+    f"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_EXECUTION_DATE.strftime(FORMAT_DATE_TIME)}#{TEST_AIRFLOW_TASK_ID}#1",
+]
+TEST_HOST = "vc1.cde-2.cdp-3.cloudera.site"
+TEST_SCHEME = "http"
 TEST_PORT = 9090
 TEST_AK = "access_key"
 TEST_PK = "private_key"
 TEST_CUSTOM_CA_CERTIFICATE = "/ca_cert/letsencrypt-stg-root-x1.pem"
 TEST_EXTRA = (
-    f'{{"access_key": "{TEST_AK}", "private_key": "{TEST_PK}",' f'"ca_cert": "{TEST_CUSTOM_CA_CERTIFICATE}"}}'
+    f'{{"access_key": "{TEST_AK}", "private_key": "{TEST_PK}", "ca_cert": "{TEST_CUSTOM_CA_CERTIFICATE}"}}'
 )
 
 TEST_DEFAULT_CONNECTION_DICT = {
-    'conn_id': CdeHook.DEFAULT_CONN_ID,
-    'conn_type': 'http',
-    'host': TEST_HOST,
-    'port': TEST_PORT,
-    'schema': TEST_SCHEME,
-    'extra': TEST_EXTRA,
+    "conn_id": CdeHook.DEFAULT_CONN_ID,
+    "conn_type": "http",
+    "host": TEST_HOST,
+    "port": TEST_PORT,
+    "schema": TEST_SCHEME,
+    "extra": TEST_EXTRA,
 }
 
 TEST_DEFAULT_CONNECTION = Connection(
     conn_id=CdeHook.DEFAULT_CONN_ID,
-    conn_type='http',
+    conn_type="http",
     host=TEST_HOST,
     port=TEST_PORT,
     schema=TEST_SCHEME,
@@ -92,7 +104,16 @@ TEST_DEFAULT_CONNECTION = Connection(
 )
 
 
-@mock.patch.object(CdeHook, 'get_connection', return_value=TEST_DEFAULT_CONNECTION)
+def mock_task_instance_for_context():
+    TEST_CONTEXT["task_instance"] = TaskInstance(
+        execution_date=TEST_AIRFLOW_RUN_EXECUTION_DATE,
+        task=BaseOperator(
+            task_id=TEST_AIRFLOW_TASK_ID, dag=DAG(TEST_AIRFLOW_DAG_ID, start_date=datetime.now())
+        ),
+    )
+
+
+@mock.patch.object(CdeHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
 class CdeRunJobOperatorTest(unittest.TestCase):
 
     """Test cases for CDE operator"""
@@ -105,7 +126,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
             variables=TEST_VARIABLES,
             overrides=TEST_OVERRIDES,
             api_retries=TEST_API_RETRIES,
-            api_timeout=TEST_API_TIMEOUT
+            api_timeout=TEST_API_TIMEOUT,
         )
         get_connection.assert_called()
         self.assertEqual(cde_operator.job_name, TEST_JOB_NAME)
@@ -119,13 +140,16 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         self.assertEqual(cde_operator.api_timeout, TEST_API_TIMEOUT)
         # Make sure that retries and timeout are passed to the hook object. Retry and timeout behaviours
         # are tested in CdeHook unit tests
-        self.assertEqual(cde_operator.get_hook().num_retries, TEST_API_RETRIES )
-        self.assertEqual(cde_operator.get_hook().api_timeout, TEST_API_TIMEOUT )
+        self.assertEqual(cde_operator.get_hook().num_retries, TEST_API_RETRIES)
+        self.assertEqual(cde_operator.get_hook().api_timeout, TEST_API_TIMEOUT)
 
-    @mock.patch.object(CdeHook, 'submit_job', return_value=TEST_JOB_RUN_ID)
-    @mock.patch.object(CdeHook, 'check_job_run_status', side_effect=['starting', 'running', 'succeeded'])
-    def test_execute_and_wait(self, check_job_mock, submit_mock, get_connection):
+    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    @mock.patch.object(CdeHook, "kill_job_run")
+    @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
+    @mock.patch.object(CdeHook, "check_job_run_status", side_effect=["starting", "running", "succeeded"])
+    def test_execute_and_wait(self, check_job_mock, submit_mock, kill_job_mock, db_mock, get_connection):
         """Test executing a job run and waiting for success"""
+        mock_task_instance_for_context()
         cde_operator = CdeRunJobOperator(
             task_id="task",
             job_name=TEST_JOB_NAME,
@@ -140,9 +164,10 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         # but kwargs method is missing in <=3.7.1
         called_args = _get_call_arguments(submit_mock.call_args)
         self.assertIsInstance(called_args, dict)
-        self.assertEqual(dict(called_args['variables'], **TEST_VARIABLES), called_args['variables'])
-        self.assertEqual(dict(called_args['variables'], **TEST_CONTEXT), called_args['variables'])
-        self.assertDictEqual(TEST_OVERRIDES, called_args['overrides'])
+        self.assertEqual(dict(called_args["variables"], **TEST_VARIABLES), called_args["variables"])
+        self.validate_context_variables(called_args["variables"])
+        self.validate_request_id(called_args["request_id"])
+        self.assertDictEqual(TEST_OVERRIDES, called_args["overrides"])
         check_job_mock.assert_has_calls(
             [
                 call(TEST_JOB_RUN_ID),
@@ -150,11 +175,17 @@ class CdeRunJobOperatorTest(unittest.TestCase):
                 call(TEST_JOB_RUN_ID),
             ]
         )
+        kill_job_mock.assert_not_called()
 
-    @mock.patch.object(CdeHook, 'submit_job', return_value=TEST_JOB_RUN_ID)
-    @mock.patch.object(CdeHook, 'check_job_run_status')
-    def test_execute_and_do_not_wait(self, check_job_mock, submit_mock, get_connection):
+    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    @mock.patch.object(CdeHook, "kill_job_run")
+    @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
+    @mock.patch.object(CdeHook, "check_job_run_status")
+    def test_execute_and_do_not_wait(
+        self, check_job_mock, submit_mock, kill_job_mock, db_mock, get_connection
+    ):
         """Test executing a job and not waiting"""
+        mock_task_instance_for_context()
         cde_operator = CdeRunJobOperator(
             task_id="task",
             job_name=TEST_JOB_NAME,
@@ -169,12 +200,14 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         # Python 3.8 works with called_args = submit_mock.call_args.kwargs,
         # but kwargs method is missing in <=3.7.1
         called_args = _get_call_arguments(submit_mock.call_args)
-        self.assertEqual(dict(called_args['variables'], **TEST_VARIABLES), called_args['variables'])
-        self.assertEqual(dict(called_args['variables'], **TEST_CONTEXT), called_args['variables'])
-        self.assertDictEqual(TEST_OVERRIDES, called_args['overrides'])
+        self.assertEqual(dict(called_args["variables"], **TEST_VARIABLES), called_args["variables"])
+        self.validate_context_variables(called_args["variables"])
+        self.validate_request_id(called_args["request_id"])
+        self.assertDictEqual(TEST_OVERRIDES, called_args["overrides"])
         check_job_mock.assert_not_called()
+        kill_job_mock.assert_not_called()
 
-    @mock.patch.object(CdeHook, 'kill_job_run')
+    @mock.patch.object(CdeHook, "kill_job_run")
     def test_on_kill(self, kill_job_mock, get_connection):
         """Test killing a running job"""
         cde_operator = CdeRunJobOperator(
@@ -189,8 +222,9 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         cde_operator._job_run_id = 1  # pylint: disable=W0212
         cde_operator.on_kill()
         kill_job_mock.assert_called()
+        self.assertTrue(cde_operator._job_run_finished)
 
-    @mock.patch.object(CdeHook, 'check_job_run_status', return_value='starting')
+    @mock.patch.object(CdeHook, "check_job_run_status", return_value="starting")
     def test_wait_for_job_times_out(self, check_job_mock, get_connection):
         """Test a job run timeout"""
         cde_operator = CdeRunJobOperator(
@@ -203,10 +237,10 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         try:
             cde_operator.wait_for_job()
         except TimeoutError:
-            self.assertRaisesRegex(TimeoutError, f'Job run did not complete in {TEST_TIMEOUT} seconds')
+            self.assertRaisesRegex(TimeoutError, f"Job run did not complete in {TEST_TIMEOUT} seconds")
             check_job_mock.assert_called()
 
-    @mock.patch.object(CdeHook, 'check_job_run_status', side_effect=['failed', 'killed', 'unknown'])
+    @mock.patch.object(CdeHook, "check_job_run_status", side_effect=["failed", "killed", "unknown"])
     def test_wait_for_job_fails_failed_status(self, check_job_mock, get_connection):
         """Test a failed job run"""
         cde_operator = CdeRunJobOperator(
@@ -216,14 +250,14 @@ class CdeRunJobOperatorTest(unittest.TestCase):
             job_poll_interval=TEST_JOB_POLL_INTERVAL,
         )
         get_connection.assert_called()
-        for status in ['failed', 'killed', 'unknown']:
+        for status in ["failed", "killed", "unknown"]:
             try:
                 cde_operator.wait_for_job()
             except AirflowException:
-                self.assertRaisesRegex(AirflowException, f'Job run exited with {status} status')
+                self.assertRaisesRegex(AirflowException, f"Job run exited with {status} status")
                 check_job_mock.assert_called()
 
-    @mock.patch.object(CdeHook, 'check_job_run_status', return_value='not_a_status')
+    @mock.patch.object(CdeHook, "check_job_run_status", return_value="not_a_status")
     def test_wait_for_job_fails_unexpected_status(self, check_job_mock, get_connection):
         """Test an unusual status from API"""
         cde_operator = CdeRunJobOperator(
@@ -237,9 +271,47 @@ class CdeRunJobOperatorTest(unittest.TestCase):
             cde_operator.wait_for_job()
         except AirflowException:
             self.assertRaisesRegex(
-                AirflowException, 'Got unexpected status when polling for job: not_a_status'
+                AirflowException, "Got unexpected status when polling for job: not_a_status"
             )
             check_job_mock.assert_called()
+
+    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    @mock.patch.object(CdeHook, "kill_job_run")
+    @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
+    @mock.patch.object(CdeHook, "check_job_run_status", side_effect=["starting", "running", "bad_status"])
+    def test_execute_and_kill_unfinished_run(
+        self, check_job_mock, submit_mock, kill_mock, db_mock, get_connection
+    ):
+        """Test executing a job run return bad_status and check the run is being killed"""
+        mock_task_instance_for_context()
+        cde_operator = CdeRunJobOperator(
+            task_id="task",
+            job_name=TEST_JOB_NAME,
+            variables=TEST_VARIABLES,
+            overrides=TEST_OVERRIDES,
+            timeout=TEST_TIMEOUT,
+            job_poll_interval=TEST_JOB_POLL_INTERVAL,
+        )
+        get_connection.assert_called()
+        try:
+            cde_operator.execute(TEST_CONTEXT)
+        except AirflowException:
+            self.assertRaisesRegex(
+                AirflowException, "Got unexpected status when polling for job: not_a_status"
+            )
+
+        check_job_mock.assert_called()
+        check_job_mock.assert_has_calls(
+            [
+                call(TEST_JOB_RUN_ID),
+                call(TEST_JOB_RUN_ID),
+                call(TEST_JOB_RUN_ID),
+            ]
+        )
+        kill_mock.assert_called()
+        check_job_mock.assert_has_calls([call(TEST_JOB_RUN_ID)])
+        submit_called_args = _get_call_arguments(submit_mock.call_args)
+        self.validate_request_id(submit_called_args["request_id"])
 
     def test_templating(self, get_connection):
         """Test templated fields"""
@@ -253,8 +325,43 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         )
         get_connection.assert_called()
         cde_operator.render_template_fields(TEST_CONTEXT)
-        self.assertEqual(dict(cde_operator.variables, **{'var1': 'someval_20201125'}), cde_operator.variables)
-        self.assertDictEqual(cde_operator.overrides, {'spark': {'conf': {'myparam': 'val_20201125'}}})
+        self.assertEqual(dict(cde_operator.variables, **{"var1": "someval_20201125"}), cde_operator.variables)
+        self.assertDictEqual(cde_operator.overrides, {"spark": {"conf": {"myparam": "val_20201125"}}})
+
+    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    def test_get_request_id(self, db_mock, get_connection):
+        """Test get_request_id calculation"""
+        cde_operator = CdeRunJobOperator(
+            task_id="task",
+            job_name=TEST_JOB_NAME,
+            timeout=TEST_TIMEOUT,
+            job_poll_interval=TEST_JOB_POLL_INTERVAL,
+        )
+        # should throw exception, because the `task_instance` is not yet populated
+        try:
+            cde_operator.get_request_id(TEST_CONTEXT)
+        except AirflowException:
+            self.assertRaisesRegex(AirflowException, "task_instance key is missing from the context:")
+
+        mock_task_instance_for_context()
+        self.validate_request_id(cde_operator.get_request_id(TEST_CONTEXT))
+
+    def validate_request_id(self, request_id):
+        timestamp = request_id.split("#")[-1]
+        for valid_request_id in VALID_REQUEST_IDS:
+            if f'{valid_request_id}#{timestamp}' == request_id:
+                return
+        self.fail(
+            f"Request ID '{request_id}' doesn't match valid patterns: {VALID_REQUEST_IDS}"
+            f" and parsed timestamp {timestamp}"
+        )
+
+    def validate_context_variables(self, variables):
+        self.assertEqual(variables["ds"], TEST_CONTEXT["ds"])
+        self.assertEqual(variables["ds_nodash"], TEST_CONTEXT["ds_nodash"])
+        self.assertEqual(variables["ts"], TEST_CONTEXT["ts"])
+        self.assertEqual(variables["ts_nodash"], TEST_CONTEXT["ts_nodash"])
+        self.assertEqual(variables["run_id"], TEST_CONTEXT["run_id"])
 
 
 if __name__ == "__main__":
