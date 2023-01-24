@@ -2,7 +2,7 @@
 
 Collection of Airflow related adds-on specific to Cloudera.
 
-## Cloudera Airflow provider.
+## Cloudera Airflow provider
 
 Data orchestration with Apache Airflow securely at scale to increase efficiency and accelerate time to value.
 

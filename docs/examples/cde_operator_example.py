@@ -1,6 +1,6 @@
 from datetime import timedelta
 from airflow import DAG
-from cloudera.airflow.operators.cde import CdeRunJobOperator
+from cloudera.airflow.providers.operators.cde import CdeRunJobOperator
 import pendulum
 
 default_args = {
