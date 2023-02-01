@@ -37,6 +37,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import datetime
 from unittest import mock
@@ -120,6 +121,58 @@ class CdeRunJobOperatorTest(unittest.TestCase):
 
     def test_init(self, get_connection: Mock):
         """Test constructor"""
+        cde_operator = CdeRunJobOperator(
+            task_id="task",
+            job_name=TEST_JOB_NAME,
+            variables=TEST_VARIABLES,
+            overrides=TEST_OVERRIDES,
+            api_retries=TEST_API_RETRIES,
+            api_timeout=TEST_API_TIMEOUT,
+        )
+        get_connection.assert_called()
+        self.assertEqual(cde_operator.job_name, TEST_JOB_NAME)
+        self.assertDictEqual(cde_operator.variables, TEST_VARIABLES)
+        self.assertDictEqual(cde_operator.overrides, TEST_OVERRIDES)
+        self.assertEqual(cde_operator.connection_id, CdeRunJobOperator.DEFAULT_CONNECTION_ID)
+        self.assertEqual(cde_operator.wait, CdeRunJobOperator.DEFAULT_WAIT)
+        self.assertEqual(cde_operator.timeout, CdeRunJobOperator.DEFAULT_TIMEOUT)
+        self.assertEqual(cde_operator.job_poll_interval, CdeRunJobOperator.DEFAULT_POLL_INTERVAL)
+        self.assertEqual(cde_operator.api_retries, TEST_API_RETRIES)
+        self.assertEqual(cde_operator.api_timeout, TEST_API_TIMEOUT)
+        # Make sure that retries and timeout are passed to the hook object. Retry and timeout behaviours
+        # are tested in CdeHook unit tests
+        self.assertEqual(cde_operator.get_hook().num_retries, TEST_API_RETRIES)
+        self.assertEqual(cde_operator.get_hook().api_timeout, TEST_API_TIMEOUT)
+
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_NUM_RETRIES": "4"})
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "10"})
+    def test_init_env(self, get_connection: Mock):
+        """Test constructor if the timeout and retry values are set by env vars in the hook."""
+        cde_operator = CdeRunJobOperator(
+            task_id="task",
+            job_name=TEST_JOB_NAME,
+            variables=TEST_VARIABLES,
+            overrides=TEST_OVERRIDES,
+        )
+        get_connection.assert_called()
+        self.assertEqual(cde_operator.job_name, TEST_JOB_NAME)
+        self.assertDictEqual(cde_operator.variables, TEST_VARIABLES)
+        self.assertDictEqual(cde_operator.overrides, TEST_OVERRIDES)
+        self.assertEqual(cde_operator.connection_id, CdeRunJobOperator.DEFAULT_CONNECTION_ID)
+        self.assertEqual(cde_operator.wait, CdeRunJobOperator.DEFAULT_WAIT)
+        self.assertEqual(cde_operator.timeout, CdeRunJobOperator.DEFAULT_TIMEOUT)
+        self.assertEqual(cde_operator.job_poll_interval, CdeRunJobOperator.DEFAULT_POLL_INTERVAL)
+        self.assertEqual(cde_operator.api_retries, None) # the value will be set only int the hook
+        self.assertEqual(cde_operator.api_timeout, None) # the value will be set only int the hook
+        # Make sure that retries and timeout are passed to the hook object. Retry and timeout behaviours
+        # are tested in CdeHook unit tests
+        self.assertEqual(cde_operator.get_hook().num_retries, 4)
+        self.assertEqual(cde_operator.get_hook().api_timeout, 10)
+
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": str(TEST_API_TIMEOUT+2)})
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_NUM_RETRIES": str(TEST_API_RETRIES+2)})
+    def test_init_override_env_value(self, get_connection: Mock):
+        """Test if the constructor values override the env vars for the timeout and retry."""
         cde_operator = CdeRunJobOperator(
             task_id="task",
             job_name=TEST_JOB_NAME,

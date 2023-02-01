@@ -37,6 +37,7 @@
 
 from __future__ import annotations
 
+import os
 import logging
 import unittest
 from concurrent.futures import Future
@@ -51,7 +52,10 @@ from retrying import RetryError  # type: ignore
 from airflow.exceptions import AirflowException
 from airflow.hooks.base_hook import BaseHook
 from airflow.models import Connection
+from airflow.configuration import conf
+
 from cloudera.airflow.providers.hooks.cde import CdeHook, CdeHookException
+
 from tests.providers.cloudera.utils import _get_call_arguments, _make_response
 
 LOG = logging.getLogger(__name__)
@@ -77,6 +81,7 @@ TEST_PK = "private_key_xxxxx_xxxxx_xxxxx_xxxxx"
 TEST_CUSTOM_CA_CERTIFICATE = "/ca_cert/letsencrypt-stg-root-x1.pem"
 TEST_EXTRA = f'{{"ca_cert_path": "{TEST_CUSTOM_CA_CERTIFICATE}"}}'
 GET_CDE_AUTH_TOKEN_METHOD = "cloudera.cdp.security.cde_security.CdeApiTokenAuth.get_cde_authentication_token"
+GET_AIRFLOW_CONFIG = "airflow.providers.cloudera.hooks.cde_hook.conf"
 INVALID_JSON_STRING = "{'invalid_json"
 
 
@@ -140,6 +145,25 @@ class CdeHookTest(unittest.TestCase):
         cde_mock.assert_not_called()
         connection_mock.assert_called()
         session_send_mock.assert_called()
+
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "400"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=_get_test_connection(host="abc.svc"))
+    def test_submit_job_ok_internal_connection_set_timeout_by_env(self, connection_mock, session_send_mock, cde_mock: mock.Mock):
+        """Test a successful submission to the API"""
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        cde_mock.assert_not_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called_with(mock.ANY,
+                                             allow_redirects=mock.ANY,
+                                             cert=mock.ANY,
+                                             proxies=mock.ANY,
+                                             stream=mock.ANY,
+                                             timeout=400,
+                                             verify=mock.ANY)
 
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, None, ""))
@@ -322,6 +346,22 @@ class CdeHookTest(unittest.TestCase):
         connection_mock.assert_called()
         session_send_mock.assert_called()
 
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "10"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_submit_job_custom_env_timeout_success(self, connection_mock, session_send_mock, cde_mock):
+        """Ensure custom timeout from the env var is taken into account
+        and succeeds as expected if the request does not timeout."""
+
+        # Regular test - request completes below timeout
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called()
+
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", side_effect=Timeout())
     @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
@@ -359,6 +399,32 @@ class CdeHookTest(unittest.TestCase):
         Set retry number to 4 times but the third call will be successful so it will succeed.
         """
         cde_hook = CdeHook(num_retries=4)
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        self.assertEqual(session_send_mock.call_count, 3)
+
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_NUM_RETRIES": "4"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(
+        Session,
+        "send",
+        return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""),
+        side_effect=[
+            ConnectionError(),
+            ConnectionError(),
+            # Returns what is specified in return_value
+            mock.DEFAULT,
+        ],
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_submit_job_custom_env_api_retries_success(self, connection_mock, session_send_mock, cde_mock):
+        """Ensure custom api_retries is taken into account from the env var and succeeds as expected.
+
+        Set retry number to 4 times but the third call will be successful so it will succeed.
+        """
+        cde_hook = CdeHook()
         run_id = cde_hook.submit_job(TEST_JOB_NAME)
         self.assertEqual(run_id, TEST_JOB_RUN_ID)
         cde_mock.assert_called()
@@ -427,6 +493,24 @@ class CdeHookTest(unittest.TestCase):
         connection_mock.assert_called()
         session_send_mock.assert_called()
 
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "400"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, b"", ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_kill_job_empty_response_bytes_timeout(self, connection_mock, session_send_mock, cde_mock):
+        """Test request of job run deletion from CDE API with modified timeout value"""
+        cde_hook = CdeHook()
+        cde_hook.kill_job_run(TEST_JOB_NAME)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called_with(mock.ANY,
+                                             allow_redirects=mock.ANY,
+                                             cert=mock.ANY,
+                                             proxies=mock.ANY,
+                                             stream=mock.ANY,
+                                             timeout=400,
+                                             verify=mock.ANY)
+
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, INVALID_JSON_STRING, ""))
     @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
@@ -451,6 +535,82 @@ class CdeHookTest(unittest.TestCase):
         cde_mock.assert_called()
         connection_mock.assert_called()
         session_send_mock.assert_called()
+
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"status": TEST_JOB_RUN_STATUS}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_check_job_run_status_timeout(self, connection_mock, session_send_mock, cde_mock):
+        """Test a successful request of job run status from CDE API"""
+        cde_hook = CdeHook()
+        status = cde_hook.check_job_run_status(TEST_JOB_RUN_ID)
+        self.assertEqual(status, TEST_JOB_RUN_STATUS)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called_with(mock.ANY,
+                                             allow_redirects=True,
+                                             cert=None,
+                                             proxies=mock.ANY,
+                                             stream=False,
+                                             timeout=CdeHook.DEFAULT_API_TIMEOUT // 10,
+                                             verify='/ca_cert/letsencrypt-stg-root-x1.pem')
+
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "450"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"status": TEST_JOB_RUN_STATUS}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_check_job_run_status_timeout(self, connection_mock, session_send_mock, cde_mock):
+        """Test the used minimal timeout value for job status call"""
+        cde_hook = CdeHook()
+        status = cde_hook.check_job_run_status(TEST_JOB_RUN_ID)
+        self.assertEqual(status, TEST_JOB_RUN_STATUS)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called_with(mock.ANY,
+                                             allow_redirects=mock.ANY,
+                                             cert=mock.ANY,
+                                             proxies=mock.ANY,
+                                             stream=mock.ANY,
+                                             timeout=450 // 10,
+                                             verify=mock.ANY)
+
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "10"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"status": TEST_JOB_RUN_STATUS}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_check_job_run_status_less_default_timeout_env(self, connection_mock, session_send_mock, cde_mock):
+        """Test the default minimal timeout value for job status even if a
+        lower value was set by the env var."""
+        cde_hook = CdeHook()
+        status = cde_hook.check_job_run_status(TEST_JOB_RUN_ID)
+        self.assertEqual(status, TEST_JOB_RUN_STATUS)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called_with(mock.ANY,
+                                             allow_redirects=mock.ANY,
+                                             cert=mock.ANY,
+                                             proxies=mock.ANY,
+                                             stream=mock.ANY,
+                                             timeout=CdeHook.DEFAULT_API_TIMEOUT // 10,
+                                             verify=mock.ANY)
+
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"status": TEST_JOB_RUN_STATUS}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_check_job_run_status_less_default_timeout_init(self, connection_mock, session_send_mock, cde_mock):
+        """Test the default minimal timeout value for job status even if a
+        lower value was set by a parameter."""
+        cde_hook = CdeHook(api_timeout=10)
+        status = cde_hook.check_job_run_status(TEST_JOB_RUN_ID)
+        self.assertEqual(status, TEST_JOB_RUN_STATUS)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called_with(mock.ANY,
+                                             allow_redirects=mock.ANY,
+                                             cert=mock.ANY,
+                                             proxies=mock.ANY,
+                                             stream=mock.ANY,
+                                             timeout=CdeHook.DEFAULT_API_TIMEOUT // 10,
+                                             verify=mock.ANY)
 
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, None, ""))

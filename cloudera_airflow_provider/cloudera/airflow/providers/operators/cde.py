@@ -38,7 +38,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from airflow.exceptions import AirflowException
+from airflow.configuration import conf
+from airflow.exceptions import AirflowException, AirflowConfigException
 from airflow.models import BaseOperator
 from cloudera.airflow.providers.hooks.cde import CdeHook, CdeHookException
 
@@ -110,6 +111,8 @@ class CdeRunJobOperator(BaseOperator):
     :param job_name: the name of the job in the target cluster, required
     :param connection_id: the Airflow connection id for the target API
         endpoint, default value ``'cde_runtime_api'``
+        Please note that in CDE Airflow all of the connections of the
+        Virtual Clusters within a CDE Service are available out of the box.
     :param variables: a dictionary of key-value pairs to populate in the
         job configuration, default empty dict.
     :param overrides: a dictionary of key-value pairs to override in the
@@ -117,13 +120,25 @@ class CdeRunJobOperator(BaseOperator):
     :param wait: if set to true, the operator will wait for the job to
         complete in the target cluster. The task exit status will reflect the
         status of the completed job. Default ``True``
-    :param timeout: the maximum time to wait in seconds for the job to
-        complete if ``wait=True``. If set to ``None``, 0 or a negative number,
-        the task will never be timed out. Default ``0``.
+    :param timeout: The maximum time to wait in seconds for the job to
+        complete if `wait=True`. If set to `None`, 0 or a negative number,
+        the task will never time out. Default `0`
     :param job_poll_interval: the interval in seconds at which the target API
         is polled for the job status. Default ``10``.
     :param api_retries: the number of times to retry an API request in the event
-        of a connection failure or non-fatal API error. Default ``9``.
+        of a connection failure or non-fatal API error. The parameter can be used
+        to overwrite the value used by the cde hook used by the operator.
+        The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'.
+        The AIRFLOW__CDE__DEFAULT_NUM_RETRIES environmemt variable can be used
+        to set the value.
+        (default: {CdeHook.DEFAULT_NUM_RETRIES}).
+    :param api_timeout: The timeout in seconds after which, if no response has been received
+        from the API, a request should be abandoned and retriedself.
+        The parameter can be used to overwrite the value used by the cde hook.
+        The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'.
+        The AIRFLOW__CDE__DEFAULT_API_TIMEOUT environmemt variable can be used
+        to set the value.
+        (default: {CdeHook.DEFAULT_API_TIMEOUT}).
     """
 
     template_fields = ("variables", "overrides")
@@ -133,9 +148,7 @@ class CdeRunJobOperator(BaseOperator):
     DEFAULT_WAIT = True
     DEFAULT_POLL_INTERVAL = 10
     DEFAULT_TIMEOUT = 0
-    DEFAULT_RETRIES = 9
     DEFAULT_CONNECTION_ID = "cde_runtime_api"
-    DEFAULT_API_TIMEOUT = 30
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
@@ -146,8 +159,8 @@ class CdeRunJobOperator(BaseOperator):
         wait: bool = DEFAULT_WAIT,
         timeout: int = DEFAULT_TIMEOUT,
         job_poll_interval: int = DEFAULT_POLL_INTERVAL,
-        api_retries: int = DEFAULT_RETRIES,
-        api_timeout: int = DEFAULT_API_TIMEOUT,
+        api_retries: int | None = None,
+        api_timeout: int | None = None,
         user=None,
         **kwargs,
     ):
@@ -162,10 +175,12 @@ class CdeRunJobOperator(BaseOperator):
         if user:
             self.log.warning("Proxy user is not yet supported. Setting it to None.")
         self.user = None
-        self.api_retries = api_retries
-        self.api_timeout = api_timeout
         if not self.job_name:
             raise ValueError("job_name required")
+
+        self.api_retries = api_retries
+        self.api_timeout = api_timeout
+
         # Set internal state
         self._hook = self.get_hook()
         self._job_run_id: int = -1
