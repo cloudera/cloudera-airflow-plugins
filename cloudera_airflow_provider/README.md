@@ -75,7 +75,7 @@ Connection contain parameters:
 | :--- | :---- | :--- |
 | ID | Id of the Airflow connection of the target CDW Virtual Warehouse | Simple string making the Virtual Warehouse identifiable |
 | Type | Airflow connection type | 'hive_cli'. Note: in Airflow UI it is available as "Hive Client Wrapper" |
-| Host | URL of related CDW connection | On CDW Virtual Warehouse UI: click 'More` > 'Copy JDBC connection link' |
+| Host | URL of related CDW connection | On CDW Virtual Warehouse UI: click 'More' > 'Copy JDBC connection link' |
 | Schema | Hive schema | 'default' or your preferred |
 | Login | Your workload user in CDP profile | Customer credentials |
 | Password | Workload password | Customer credentials |
@@ -112,8 +112,8 @@ must have already been created via the specified virtual cluster jobs API.
 | wait | bool | If set to true, the operator will wait for the job to complete in the target cluster. The task exit status will reflect the  status of the completed job. Default `True` |
 | timeout | int | The maximum time to wait in seconds for the job to complete if `wait=True`. If set to `None`, 0 or a negative number, the task will never time out. Default `0` |
 | job_poll_interval | int | The interval in seconds at which the target API is polled for the job status. Default `10` |
-| api_retries | int | The number of times to retry an API request in the event of a connection failure or non-fatal API error. Default `9` |
-| api_timeout | int | The timeout in seconds after which, if no response has been received from the API, a request should be abandoned and retried. Default `30` |
+| api_retries | int | The number of times to retry an API request in the event of a connection failure or non-fatal API error. The parameter can be used to overwrite the value used by the cde hook used by the operator. The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'. The `AIRFLOW__CDE__DEFAULT_NUM_RETRIES` environmemt variable can be used to set the value. Default value in the cde hook: `9` |
+| api_timeout | int | The timeout in seconds after which, if no response has been received from the API, a request should be abandoned and retried. The parameter can be used to overwrite the value used by the cde hook. The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'. The `AIRFLOW__CDE__DEFAULT_API_TIMEOUT` environmemt variable can be used to set the value. The timeout value for the job run status check is calculated separately. The tenth of the `api_timeout` value is used if it is not less than `CdeHook.DEFAULT_API_TIMEOUT // 10`. If it is less the `CdeHook.DEFAULT_API_TIMEOUT // 10` value will be used. Default value in the cde hook: `300` |
 
 Example CDE operator DAG snippet:
 ```python

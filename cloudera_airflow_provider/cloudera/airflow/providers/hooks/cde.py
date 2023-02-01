@@ -51,7 +51,8 @@ from cloudera.cdp.security.cde_security import BearerAuth, CdeApiTokenAuth, CdeT
 from cloudera.cdp.security.cdp_security import CdpAccessKeyCredentials, CdpAccessKeyV2TokenAuth
 from cloudera.cdp.security.token_cache import EncryptedFileTokenCacheStrategy
 
-from airflow.exceptions import AirflowException  # type: ignore
+from airflow.configuration import conf
+from airflow.exceptions import AirflowException, AirflowConfigException  # type: ignore
 from airflow.hooks.base import BaseHook  # type: ignore
 from airflow.providers.http.hooks.http import HttpHook  # type: ignore
 from cloudera.airflow.providers.hooks import CdpHookException
@@ -86,13 +87,13 @@ class CdeHook(BaseHook):  # type: ignore
     DEFAULT_CONN_ID = "cde_runtime_api"
     # Gives a total of at least 2^8+2^7+...2=510 seconds of retry with exponential backoff
     DEFAULT_NUM_RETRIES = 9
-    DEFAULT_API_TIMEOUT = 30
+    DEFAULT_API_TIMEOUT = 300
 
     def __init__(
         self,
         connection_id: str = DEFAULT_CONN_ID,
-        num_retries: int = DEFAULT_NUM_RETRIES,
-        api_timeout: int = DEFAULT_API_TIMEOUT,
+        num_retries: int | None = None,
+        api_timeout: int | None = None,
     ) -> None:
         """
         Create a new CdeHook. The connection parameters are eagerly validated to highlight
@@ -101,20 +102,59 @@ class CdeHook(BaseHook):  # type: ignore
         :param connection_id: The connection name for the target virtual cluster API
             (default: {CdeHook.DEFAULT_CONN_ID}).
         :param num_retries: The number of times API requests should be retried if a server-side
-            error or transport error is encountered (default: {CdeHook.DEFAULT_NUM_RETRIES}).
+            error or transport error is encountered.
+            The number of times to retry an API request in the event
+            of a connection failure or non-fatal API error.
+            The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'.
+            The AIRFLOW__CDE__DEFAULT_NUM_RETRIES environmemt variable can be used
+            to set the value.
+            (default: {CdeHook.DEFAULT_NUM_RETRIES}).
         :param api_timeout: The timeout in seconds after which, if no response has been received
-            from the API, a request should be abandoned and retried
+            from the API, a request should be abandoned and retriedself.
+            The parameter can be used to overwrite the value used by the cde hook.
+            The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'.
+            The AIRFLOW__CDE__DEFAULT_API_TIMEOUT environmemt variable can be used
+            to set the value.
+            The timeout value for the job run status check is calculated separately.
+            The tenth of the api_timeout value is used if it is not less than
+            CdeHook.DEFAULT_API_TIMEOUT // 10. If it is less the
+            CdeHook.DEFAULT_API_TIMEOUT // 10 value will be used.
             (default: {CdeHook.DEFAULT_API_TIMEOUT}).
         """
         super().__init__(connection_id)
         self.cde_conn_id = connection_id
         airflow_connection = self.get_connection(self.cde_conn_id)
         self.connection = CdeConnection.from_airflow_connection(airflow_connection)
-        self.num_retries = num_retries
-        self.api_timeout = api_timeout
+
+        num_retries_val = CdeHook.DEFAULT_NUM_RETRIES
+        if num_retries is not None:
+            num_retries_val = num_retries
+        else:
+            try:
+                num_retries_val = conf.getint('cde', 'DEFAULT_NUM_RETRIES')
+            except AirflowConfigException as acerr:
+                self.log.warning(acerr)
+
+        self.num_retries = num_retries_val
+
+        api_timeout_val = CdeHook.DEFAULT_API_TIMEOUT
+        if api_timeout is not None:
+            api_timeout_val = api_timeout
+        else:
+            try:
+                api_timeout_val = conf.getint('cde', 'DEFAULT_API_TIMEOUT')
+            except AirflowConfigException as acerr:
+                self.log.warning(acerr)
+
+        self.api_timeout = api_timeout_val
 
     def _do_api_call(
-        self, method: str, endpoint: str, params: dict[str, Any] | None = None
+        self,
+        method: str,
+        endpoint: str,
+        timeout: int,
+        retries: int,
+        params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         """
         Execute the API call. Requests are retried for connection errors and server-side errors
@@ -125,7 +165,6 @@ class CdeHook(BaseHook):  # type: ignore
             If the endpoint does not start with '/' this will be added
         :param params: A dictionary of parameters to send in either HTTP body as a JSON document
             or as URL parameters for GET requests
-        :param body: A dictionary to send in the HTTP body as a JSON document
         :return: The API response converted to a Python dictionary
             or an AirflowException if the API returns an error
         """
@@ -148,15 +187,15 @@ class CdeHook(BaseHook):  # type: ignore
             method,
             endpoint,
             params,
-            self.api_timeout,
-            self.num_retries,
+            timeout,
+            retries,
         )
         http = HttpHook(method.upper(), http_conn_id=self.cde_conn_id)
         retry_handler = RetryHandler()
 
         try:
             extra_options: dict[str, Any] = dict(
-                timeout=self.api_timeout,
+                timeout=timeout,
                 # we check the response ourselves in RetryHandler
                 check_response=False,
             )
@@ -182,7 +221,7 @@ class CdeHook(BaseHook):  # type: ignore
             common_kwargs: dict[str, Any] = dict(
                 _retry_args=dict(
                     wait=tenacity.wait_exponential(),
-                    stop=tenacity.stop_after_attempt(self.num_retries),
+                    stop=tenacity.stop_after_attempt(retries),
                     retry=retry_handler,
                 ),
                 endpoint=endpoint,
@@ -307,7 +346,7 @@ class CdeHook(BaseHook):  # type: ignore
             user=None,
             requestID=request_id,
         )
-        response = self._do_api_call("POST", f"/jobs/{job_name}/run", body)
+        response = self._do_api_call("POST", f"/jobs/{job_name}/run", self.api_timeout, self.num_retries, body)
         if response is None:
             msg = f"Unexpected 'None' response for '{job_name}' job."
             self.log.error(msg)
@@ -325,7 +364,7 @@ class CdeHook(BaseHook):  # type: ignore
 
         :param run_id: the run ID of the job run
         """
-        self._do_api_call("POST", f"/job-runs/{run_id}/kill")
+        self._do_api_call("POST", f"/job-runs/{run_id}/kill", self.api_timeout, self.num_retries)
 
     def check_job_run_status(self, run_id: int) -> str:
         """
@@ -335,7 +374,10 @@ class CdeHook(BaseHook):  # type: ignore
         :return: the job run status
         :rtype: str
         """
-        response = self._do_api_call("GET", f"/job-runs/{run_id}")
+        default_status_check_timeout = CdeHook.DEFAULT_API_TIMEOUT // 10
+        timeout = self.api_timeout // 10 if self.api_timeout // 10 >= default_status_check_timeout else default_status_check_timeout
+
+        response = self._do_api_call("GET", f"/job-runs/{run_id}", timeout, self.num_retries)
         if response is None:
             msg = f"Unexpected 'None' response for '{run_id}' job run."
             self.log.error(msg)
