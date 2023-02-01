@@ -3,7 +3,19 @@ All notable changes to this project will be documented in this file.
  
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
- 
+
+## [2.1.0] - 2023-02-01
+
+New environment variables allow to modify the `api_retries` and
+`api_timeout` values used by the cde hook:
+- `AIRFLOW__CDE__DEFAULT_NUM_RETRIES` to set the `api_retries` value.
+- `AIRFLOW__CDE__DEFAULT_API_TIMEOUT` to set the `api_timeout` value.
+
+The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'.
+
+With the environemt variables it is easier to fine tune the values without the
+need to modify the existing DAG files.
+
 ## [2.0.1] - 2023-01-02
 
 Synchronise version settings for public release.
