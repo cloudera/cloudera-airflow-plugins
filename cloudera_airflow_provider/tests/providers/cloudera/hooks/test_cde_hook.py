@@ -231,6 +231,28 @@ class CdeHookTest(unittest.TestCase):
         Session,
         "send",
         side_effect=[
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(201, {"id": TEST_JOB_RUN_ID}, ""),
+        ],
+    )
+    def test_submit_job_retry_after_429_works(self, send_mock, connection_mock, cde_mock):
+        """Ensure that 429 errors are handled"""
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        self.assertEqual(cde_mock.call_count, 1)
+        self.assertEqual(send_mock.call_count, 3)
+        connection_mock.assert_called()
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[
             _make_response(503, None, "Internal Server Error"),
             _make_response(500, None, "Internal Server Error"),
             _make_response(201, {"id": TEST_JOB_RUN_ID}, ""),

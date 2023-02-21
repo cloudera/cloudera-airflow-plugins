@@ -453,6 +453,12 @@ class RetryHandler:
                         f" waiting for run {response.text.rstrip()} to finish"
                     )
                     return self.EXIT_RETRIES
+                elif response.status_code == 429:
+                    self.log.info(
+                        f"Request could not be processed, "
+                        + "reached rate limit of CDE API: {error_msg}. Retrying"
+                    )
+                    return self.CONTINUE_RETRIES
                 elif 500 <= response.status_code < 600:
                     return self.CONTINUE_RETRIES
                 else:

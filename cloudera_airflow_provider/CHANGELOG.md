@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.1] - 2023-02-21
+
+Added handling of HTTP 429 on job submission for retries.
+
 ## [2.1.0] - 2023-02-01
 
 New environment variables allow to modify the `api_retries` and
