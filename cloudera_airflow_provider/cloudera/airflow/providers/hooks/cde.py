@@ -131,9 +131,13 @@ class CdeHook(BaseHook):  # type: ignore
             num_retries_val = num_retries
         else:
             try:
-                num_retries_val = conf.getint('cde', 'DEFAULT_NUM_RETRIES')
+                num_retries_val = conf.getint(
+                    'cde', 'DEFAULT_NUM_RETRIES', fallback=CdeHook.DEFAULT_NUM_RETRIES
+                )
             except AirflowConfigException as acerr:
                 self.log.warning(acerr)
+                self.log.warning("Falling back to default num retries value: %s",
+                                 CdeHook.DEFAULT_NUM_RETRIES)
 
         self.num_retries = num_retries_val
 
@@ -142,9 +146,13 @@ class CdeHook(BaseHook):  # type: ignore
             api_timeout_val = api_timeout
         else:
             try:
-                api_timeout_val = conf.getint('cde', 'DEFAULT_API_TIMEOUT')
+                api_timeout_val = conf.getint(
+                    'cde', 'DEFAULT_API_TIMEOUT', fallback=CdeHook.DEFAULT_API_TIMEOUT
+                )
             except AirflowConfigException as acerr:
                 self.log.warning(acerr)
+                self.log.warning("Falling back to default api timeout value: %s",
+                                 CdeHook.DEFAULT_API_TIMEOUT)
 
         self.api_timeout = api_timeout_val
 
@@ -453,6 +461,12 @@ class RetryHandler:
                         f" waiting for run {response.text.rstrip()} to finish"
                     )
                     return self.EXIT_RETRIES
+                elif response.status_code == 429:
+                    self.log.info(
+                        f"Request could not be processed, "
+                        + "reached rate limit of CDE API: {error_msg}. Retrying"
+                    )
+                    return self.CONTINUE_RETRIES
                 elif 500 <= response.status_code < 600:
                     return self.CONTINUE_RETRIES
                 else:

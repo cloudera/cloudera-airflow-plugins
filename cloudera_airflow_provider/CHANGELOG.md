@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+
+## [2.1.1] - 2023-02-21
+
+- Added handling of HTTP 429 on job submission for retries.
+- reduce the number of warnings in the logs if the `AIRFLOW__CDE__DEFAULT_NUM_RETRIES`
+  or `AIRFLOW__CDE__DEFAULT_API_TIMEOUT` config values are not set.
+
 ## [2.1.0] - 2023-02-01
 
 New environment variables allow to modify the `api_retries` and

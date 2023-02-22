@@ -165,6 +165,30 @@ class CdeHookTest(unittest.TestCase):
                                              timeout=400,
                                              verify=mock.ANY)
 
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "400asdf"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=_get_test_connection(host="abc.svc"))
+    def test_submit_job_failed_internal_connection_set_timeout_by_env(
+        self, connection_mock, session_send_mock, cde_mock: mock.Mock
+    ):
+        """Test a wrong api timeout value via the AIRFLOW__CDE__DEFAULT_API_TIMEOUT
+        environment variable, the default value should be used in this case."""
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        cde_mock.assert_not_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called_with(
+            mock.ANY,
+            allow_redirects=mock.ANY,
+            cert=mock.ANY,
+            proxies=mock.ANY,
+            stream=mock.ANY,
+            timeout=CdeHook.DEFAULT_API_TIMEOUT,
+            verify=mock.ANY,
+        )
+
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, None, ""))
     @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
@@ -222,6 +246,28 @@ class CdeHookTest(unittest.TestCase):
         cde_mock.assert_called()
         connection_mock.assert_called()
         session_send_mock.assert_called()
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(201, {"id": TEST_JOB_RUN_ID}, ""),
+        ],
+    )
+    def test_submit_job_retry_after_429_works(self, send_mock, connection_mock, cde_mock):
+        """Ensure that 429 errors are handled"""
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        self.assertEqual(cde_mock.call_count, 1)
+        self.assertEqual(send_mock.call_count, 3)
+        connection_mock.assert_called()
 
     @mock.patch.object(
         CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
@@ -430,6 +476,38 @@ class CdeHookTest(unittest.TestCase):
         cde_mock.assert_called()
         connection_mock.assert_called()
         self.assertEqual(session_send_mock.call_count, 3)
+
+    @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_NUM_RETRIES": "4asdf"})
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch.object(
+        Session,
+        "send",
+        return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""),
+        side_effect=[
+            ConnectionError(),
+            ConnectionError(),
+            ConnectionError(),
+            ConnectionError(),
+            ConnectionError(),
+            ConnectionError(),
+            ConnectionError(),
+            ConnectionError(),
+            # Returns what is specified in return_value
+            mock.DEFAULT,
+        ],
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    def test_submit_job_custom_env_api_retries_success(self, connection_mock, session_send_mock, cde_mock):
+        """The default num retries value should be used if a wrong value is set via the
+        AIRFLOW__CDE_DEFAULT_NUM_RETRIES environment variable.
+        The call will succeed for the 9th call which is the CdeHook.DEFAULT_NUM_RETRIES value.
+        """
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        cde_mock.assert_called()
+        connection_mock.assert_called()
+        self.assertEqual(session_send_mock.call_count, CdeHook.DEFAULT_NUM_RETRIES)
 
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", side_effect=ConnectionError())
