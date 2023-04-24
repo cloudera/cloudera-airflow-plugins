@@ -39,7 +39,7 @@ import time
 from typing import Any
 
 from airflow.configuration import conf
-from airflow.exceptions import AirflowException, AirflowConfigException
+from airflow.exceptions import AirflowConfigException, AirflowException
 from airflow.models import BaseOperator
 from cloudera.airflow.providers.hooks.cde import CdeHook, CdeHookException
 
