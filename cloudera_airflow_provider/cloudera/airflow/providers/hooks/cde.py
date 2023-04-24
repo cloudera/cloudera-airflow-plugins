@@ -39,9 +39,12 @@ checking its status or killing it.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
-from typing import Any
+import typing
+from datetime import timedelta
+from typing import Any, Callable, Tuple, Type
 
 import requests
 import tenacity  # type: ignore
@@ -52,13 +55,156 @@ from cloudera.cdp.security.cdp_security import CdpAccessKeyCredentials, CdpAcces
 from cloudera.cdp.security.token_cache import EncryptedFileTokenCacheStrategy
 
 from airflow.configuration import conf
-from airflow.exceptions import AirflowException, AirflowConfigException  # type: ignore
+from airflow.exceptions import AirflowConfigException, AirflowException  # type: ignore
 from airflow.hooks.base import BaseHook  # type: ignore
 from airflow.providers.http.hooks.http import HttpHook  # type: ignore
 from cloudera.airflow.providers.hooks import CdpHookException
 from cloudera.airflow.providers.model.connection import CdeConnection
+from tenacity.stop import stop_base
+from tenacity.wait import wait_base
+
+DEFAULT_RETRY_INTERVAL = 4
+RETRY_AFTER_HEADER = "Retry-After"
+time_unit_type = typing.Union[int, float, timedelta]
 
 HTTP_EMPTY_BODY_RESPONSES = [b'', None]
+
+
+class CustomWait(wait_base):
+    """Custom wait class to handle Rate-limited retries (HTTP 429 + Retry-After header) separately.
+    Under normal circumstances, we use tenacity's exponential retry.
+    If the server's HTTP response code is 429, we use the fixed retry.
+    If the server has sent the 'Retry-After' header, the wait time between retries will be that value,
+    otherwise 4 seconds as a default.
+    """
+
+    def __init__(self, logger) -> None:
+        self.log = logger
+        self.wait_fixed_cls: Type[tenacity.wait_base] = tenacity.wait_fixed
+        self.wait_exponential_obj: Type[tenacity.wait_base] = tenacity.wait_exponential()
+        self.start_of_retries_logged = False
+
+    def __call__(self, retry_state: "RetryCallState") -> float:
+        if isinstance(retry_state.outcome, tenacity.Future):
+            future_outcome: tenacity.Future = retry_state.outcome
+            if not future_outcome.failed and isinstance(future_outcome.result(), requests.Response):
+                response: requests.Response = future_outcome.result()
+                if response.status_code == 429:
+                    # We wait a fixed interval for HTTP 429
+                    retry_after = self._get_retry_after_value(response)
+                    return self._wait_fixed(retry_state, retry_after)
+        return self._wait_exponential(retry_state)
+
+    def _wait_exponential(self, retry_state: "RetryCallState"):
+        self.log.debug("Waiting exponentially between requests")
+        return self.wait_exponential_obj(retry_state=retry_state)
+
+    def _wait_fixed(self, retry_state: "RetryCallState", retry_after: int):
+        if not self.start_of_retries_logged:
+            self.log.info("The server is overloaded and this request has been rejected due to server-side throttling. "
+                          "The request will be retried regularly until it gets accepted or typically fails after 2 hours of retry.")
+            self.start_of_retries_logged = True
+
+        # Since the value of retry after second can change from response to response,
+        # we need to instantiate tenacity.wait_fixed class here to have the correct value on each retry
+        self.log.debug("The server is overloaded and this request has been rejected due to server-side throttling (HTTP 429). "
+                       "Waiting fixed interval of %d seconds between requests", retry_after)
+        return self.wait_fixed_cls(retry_after)(retry_state=retry_state)
+
+    def _get_retry_after_value(self, response: requests.Response) -> int:
+        if RETRY_AFTER_HEADER in response.headers:
+            return self._parse_retry_after_as_int(response, DEFAULT_RETRY_INTERVAL)
+        else:
+            self.log.warning(
+                "Cannot find '%s' header in response, using default wait interval of %d seconds",
+                RETRY_AFTER_HEADER,
+                DEFAULT_RETRY_INTERVAL)
+            return DEFAULT_RETRY_INTERVAL
+
+    def _parse_retry_after_as_int(self, response: requests.Response, default_value: int) -> int:
+        header_value = response.headers[RETRY_AFTER_HEADER]
+        try:
+            int_value = int(header_value)
+            return int_value
+        except ValueError:
+            self.log.warning("Failed to parse '%s' as int, value of header was: %s. "
+                             "Using default wait interval of %d seconds",
+                             RETRY_AFTER_HEADER, header_value,
+                             DEFAULT_RETRY_INTERVAL)
+            return default_value
+
+
+class RateLimitedStop(stop_base):
+    TEN_MINUTES = 10 * 60
+
+    @staticmethod
+    def _to_seconds(time_unit: time_unit_type) -> float:
+        return float(time_unit.total_seconds() if isinstance(time_unit, timedelta) else time_unit)
+
+    def __init__(self, logger,
+                 num_retries: int,
+                 time_unit: time_unit_type) -> None:
+        self.log = logger
+        self.num_retries = num_retries
+        self.max_seconds_of_retries = self._to_seconds(time_unit)
+        self.stop_after_attempt: Type[tenacity.stop_base] = tenacity.stop_after_attempt(num_retries)
+        self.stop_after_delay: Type[tenacity.stop_base] = tenacity.stop_after_delay(self.max_seconds_of_retries)
+        self.log_start = datetime.datetime.now()
+
+    def __call__(self, retry_state: "RetryCallState") -> float:
+        seconds_since_start = retry_state.seconds_since_start
+        seconds_left = self.max_seconds_of_retries - seconds_since_start
+
+        self.log.debug("Request throttling (Rate limiting) retry progress: "
+                       "Number of retries: %s, "
+                       "Maximum time span of retries (in seconds): %d, "
+                       "Seconds left: %s", self.num_retries, self.max_seconds_of_retries, seconds_left)
+
+        stop_after_attempt_res = self.stop_after_attempt(retry_state)
+        stop_after_delay_res = self.stop_after_delay(retry_state)
+
+        if stop_after_attempt_res:
+            self.log.info("Stopping Rate-Limited retries as maximum number of retries exceeded. "
+                          "Please note that the server might still be overloaded.")
+        if stop_after_delay_res:
+            self.log.info("Stopping Rate-limited retries as maximum time span exceeded. "
+                          "Please note that the server might still be overloaded.")
+        else:
+            now = datetime.datetime.now()
+            seconds_elapsed = (now - self.log_start).total_seconds()
+            if seconds_elapsed >= RateLimitedStop.TEN_MINUTES:
+                self.log.info("Still retrying, as the server is overloaded. "
+                              "Please note that this message is printed every 10 minutes to indicate progress.")
+                self.log_start = now
+        return any([stop_after_attempt_res, stop_after_delay_res])
+
+
+class CustomStop(stop_base):
+    """
+    Custom stop class to handle Rate-limited retries (HTTP 429 + Retry-After) in a special way.
+    Under normal circumstances, we use tenacity's stop_after_attempt method.
+    If the server's HTTP response code is 429, we retry with fixed delays between retries, please refer to RateLimitedStop for more details.
+    Otherwise, with the normal wait, we stop after default_num_retries.
+    """
+
+    def __init__(self, logger,
+                 default_num_retries: int,
+                 rate_limited_num_retries: int,
+                 retry_time_span: time_unit_type) -> None:
+        self.log = logger
+        self.default_num_retries = default_num_retries
+        self.normal_stop = tenacity.stop_after_attempt(self.default_num_retries)
+        self.rate_limited_stop = RateLimitedStop(logger, rate_limited_num_retries, retry_time_span)
+
+    def __call__(self, retry_state: "RetryCallState") -> float:
+        if isinstance(retry_state.outcome, tenacity.Future):
+            future_outcome: tenacity.Future = retry_state.outcome
+            if not future_outcome.failed and isinstance(future_outcome.result(), requests.Response):
+                response: requests.Response = future_outcome.result()
+                if response.status_code == 429:
+                    return self.rate_limited_stop(retry_state)
+        self.log.debug("Using normal Tenacity stop object, number of retries: %s", self.default_num_retries)
+        return self.normal_stop(retry_state)
 
 
 class CdeHookException(CdpHookException):
@@ -87,13 +233,15 @@ class CdeHook(BaseHook):  # type: ignore
     DEFAULT_CONN_ID = "cde_runtime_api"
     # Gives a total of at least 2^8+2^7+...2=510 seconds of retry with exponential backoff
     DEFAULT_NUM_RETRIES = 9
+    DEFAULT_NUM_RETRIES_RATE_LIMITED = 1800  # 4 seconds * 1800 --> 2 hours worth of retries
+    RETRY_TIME_SPAN_FOR_RATE_LIMIT = datetime.timedelta(hours=2)
     DEFAULT_API_TIMEOUT = 300
 
     def __init__(
         self,
         connection_id: str = DEFAULT_CONN_ID,
         num_retries: int | None = None,
-        api_timeout: int | None = None,
+        api_timeout: int | None = None
     ) -> None:
         """
         Create a new CdeHook. The connection parameters are eagerly validated to highlight
@@ -161,7 +309,6 @@ class CdeHook(BaseHook):  # type: ignore
         method: str,
         endpoint: str,
         timeout: int,
-        retries: int,
         params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         """
@@ -196,7 +343,7 @@ class CdeHook(BaseHook):  # type: ignore
             endpoint,
             params,
             timeout,
-            retries,
+            self.num_retries,
         )
         http = HttpHook(method.upper(), http_conn_id=self.cde_conn_id)
         retry_handler = RetryHandler()
@@ -228,8 +375,11 @@ class CdeHook(BaseHook):  # type: ignore
 
             common_kwargs: dict[str, Any] = dict(
                 _retry_args=dict(
-                    wait=tenacity.wait_exponential(),
-                    stop=tenacity.stop_after_attempt(retries),
+                    wait=CustomWait(self.log),
+                    stop=CustomStop(self.log,
+                                    self.num_retries,
+                                    CdeHook.DEFAULT_NUM_RETRIES_RATE_LIMITED,
+                                    CdeHook.RETRY_TIME_SPAN_FOR_RATE_LIMIT),
                     retry=retry_handler,
                 ),
                 endpoint=endpoint,
@@ -354,7 +504,7 @@ class CdeHook(BaseHook):  # type: ignore
             user=None,
             requestID=request_id,
         )
-        response = self._do_api_call("POST", f"/jobs/{job_name}/run", self.api_timeout, self.num_retries, body)
+        response = self._do_api_call("POST", f"/jobs/{job_name}/run", self.api_timeout, body)
         if response is None:
             msg = f"Unexpected 'None' response for '{job_name}' job."
             self.log.error(msg)
@@ -372,7 +522,7 @@ class CdeHook(BaseHook):  # type: ignore
 
         :param run_id: the run ID of the job run
         """
-        self._do_api_call("POST", f"/job-runs/{run_id}/kill", self.api_timeout, self.num_retries)
+        self._do_api_call("POST", f"/job-runs/{run_id}/kill", self.api_timeout)
 
     def check_job_run_status(self, run_id: int) -> str:
         """
@@ -385,7 +535,7 @@ class CdeHook(BaseHook):  # type: ignore
         default_status_check_timeout = CdeHook.DEFAULT_API_TIMEOUT // 10
         timeout = self.api_timeout // 10 if self.api_timeout // 10 >= default_status_check_timeout else default_status_check_timeout
 
-        response = self._do_api_call("GET", f"/job-runs/{run_id}", timeout, self.num_retries)
+        response = self._do_api_call("GET", f"/job-runs/{run_id}", timeout)
         if response is None:
             msg = f"Unexpected 'None' response for '{run_id}' job run."
             self.log.error(msg)
@@ -462,10 +612,6 @@ class RetryHandler:
                     )
                     return self.EXIT_RETRIES
                 elif response.status_code == 429:
-                    self.log.info(
-                        f"Request could not be processed, "
-                        + "reached rate limit of CDE API: {error_msg}. Retrying"
-                    )
                     return self.CONTINUE_RETRIES
                 elif 500 <= response.status_code < 600:
                     return self.CONTINUE_RETRIES

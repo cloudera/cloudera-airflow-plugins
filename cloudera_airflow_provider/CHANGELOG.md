@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.2] - 2023-04-24
+- Enhanced handling of HTTP 429 on job submission for retries.
+- When rate limited:
+1. Use wait time as specified in "Retry-After" HTTP response header.
+2. Simple retry, no exponential retry
+3. More retries, but only retrying for 2 hours at most
+- Better logging for retries: wait / stop handlers
 
 ## [2.1.1] - 2023-02-21
 

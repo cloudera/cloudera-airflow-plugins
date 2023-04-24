@@ -37,13 +37,18 @@
 
 from __future__ import annotations
 
+import contextlib
+import datetime
 import os
 import logging
 import unittest
 from concurrent.futures import Future
 from json import JSONDecodeError
+from typing import List, Set, Callable
 from unittest import mock
+from unittest.mock import Mock, call
 
+import tenacity
 from cloudera.cdp.security.cde_security import CdeApiTokenAuth, CdeTokenAuthResponse
 from requests import Session
 from requests.exceptions import ConnectionError, HTTPError, Timeout
@@ -54,9 +59,15 @@ from airflow.hooks.base_hook import BaseHook
 from airflow.models import Connection
 from airflow.configuration import conf
 
-from cloudera.airflow.providers.hooks.cde import CdeHook, CdeHookException
+from cloudera.airflow.providers.hooks.cde import CdeHook, CdeHookException, RetryHandler
 
 from tests.providers.cloudera.utils import _get_call_arguments, _make_response
+
+from cloudera.airflow.providers.hooks.cde import CustomWait
+
+from cloudera.airflow.providers.hooks.cde import DEFAULT_RETRY_INTERVAL, RETRY_AFTER_HEADER
+
+from cloudera.airflow.providers.hooks.cde import CustomStop
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.DEBUG)
@@ -112,6 +123,71 @@ VALID_CDE_TOKEN_AUTH_RESPONSE = CdeTokenAuthResponse.from_response(VALID_CDE_TOK
 
 class CdeHookTest(unittest.TestCase):
     """Unit tests for CdeHook"""
+
+    @contextlib.contextmanager
+    def tenacity_wait_mocks(self, wait_impl: Callable = None):
+        """
+        Creates mocks for tenacity.wait_fixed and tenacity.wait_exponential.
+        The tests require to verify calls of the constructor of wait_fixed to check if the parameter was correct.
+        Also, test can be interested in the call count of the wait instance for exponential waits,
+        therefore we yield these two.
+        The default implementation for both wait methods is the same: to wait 0.1 seconds.
+        This can be overriden with the method arguments.
+        We call both classes with an arbitrary constructor param (-1111) in order to have access to the stop instance object.
+        """
+
+        # This is the actual wait time between requests
+        actual_wait_seconds = 0.1
+
+        def wait_very_short(retry_state):
+            LOG.debug("Called wait_fixed or wait_exponential mock. Arg: %s", retry_state)
+            return actual_wait_seconds
+
+        with mock.patch('tenacity.wait_fixed') as wait_fixed_cls_mock, \
+                mock.patch('tenacity.wait_exponential') as wait_exp_cls_mock:
+            arbitrary_ctor_param = -1111
+            wait_fixed_obj = wait_fixed_cls_mock(arbitrary_ctor_param)
+            wait_exp_obj = wait_exp_cls_mock(arbitrary_ctor_param)
+
+            wait_fixed_obj.side_effect = wait_very_short
+            wait_exp_obj.side_effect = wait_very_short
+
+            if wait_impl:
+                wait_exp_obj.side_effect = wait_impl
+                wait_fixed_obj.side_effect = wait_impl
+
+            yield wait_fixed_cls_mock, wait_exp_obj
+
+    @contextlib.contextmanager
+    def tenacity_stop_mocks(self,
+                            stop_after_attempt_impl: Callable = None,
+                            stop_after_delay_impl: Callable = None):
+        """
+        Creates mocks for tenacity.stop_after_attempt and tenacity.stop_after_delay.
+        Some tests may require to verify calls of the constructor of the wait class or calls to the instance of the wait class,
+        therefore we yield all of these.
+        The default implementation for the attempt-based and the delay-based stops is the same: to never stop.
+        This can be overriden with the method arguments.
+        We call both classes with an arbitrary constructor param (-1111) in order to have access to the stop instance object.
+        """
+        def never_stop_impl(retry_state):
+            LOG.debug("Called never_stop_impl on mock. Arg: %s", retry_state)
+            return False
+
+        with mock.patch('tenacity.stop_after_attempt') as stop_after_attempt_cls_mock, \
+                mock.patch('tenacity.stop_after_delay') as stop_after_delay_cls_mock:
+            arbitrary_ctor_param = -1111
+            stop_after_attempt_obj = stop_after_attempt_cls_mock(arbitrary_ctor_param)
+            stop_after_attempt_obj.side_effect = never_stop_impl
+            if stop_after_attempt_impl:
+                stop_after_attempt_obj.side_effect = stop_after_attempt_impl
+
+            stop_after_delay_obj = stop_after_delay_cls_mock(arbitrary_ctor_param)
+            stop_after_delay_obj.side_effect = never_stop_impl
+            if stop_after_delay_impl:
+                stop_after_delay_obj.side_effect = stop_after_delay_impl
+
+            yield stop_after_attempt_cls_mock, stop_after_attempt_obj, stop_after_delay_cls_mock, stop_after_delay_obj
 
     @mock.patch.object(
         BaseHook, "get_connection", return_value=_get_test_connection(extra='{"insecure": False}')
@@ -262,12 +338,291 @@ class CdeHookTest(unittest.TestCase):
     )
     def test_submit_job_retry_after_429_works(self, send_mock, connection_mock, cde_mock):
         """Ensure that 429 errors are handled"""
+
         cde_hook = CdeHook()
         run_id = cde_hook.submit_job(TEST_JOB_NAME)
         self.assertEqual(run_id, TEST_JOB_RUN_ID)
         self.assertEqual(cde_mock.call_count, 1)
         self.assertEqual(send_mock.call_count, 3)
         connection_mock.assert_called()
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests", headers=[(RETRY_AFTER_HEADER, "5")]),
+            _make_response(429, None, "Too Many Requests", headers=[(RETRY_AFTER_HEADER, "6")]),
+            _make_response(500, None, "Internal Server Error"),
+            _make_response(500, None, "Internal Server Error"),
+            _make_response(201, {"id": TEST_JOB_RUN_ID}, ""),
+        ],
+    )
+    def test_submit_job_retry_after_429_with_and_without_header(self, send_mock, connection_mock, cde_mock):
+        """Ensure that 429 errors are handled properly.
+        Test expectations:
+        3 retries with default retry interval for HTTP 429, without 'Retry-After' header/
+        2 retries with 5 and 6 seconds, respectively for HTTP 429, retry interval is parsed from the 'Retry-After' header.
+        2 retries for the HTTP 500 responses, that is using the default exponential retry mechanism.
+        """
+
+        with self.tenacity_wait_mocks() as wait_mocks:
+            wait_fixed_cls_mock = wait_mocks[0]
+            wait_exp_obj_mock = wait_mocks[1]
+
+            cde_hook = CdeHook()
+            run_id = cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(run_id, TEST_JOB_RUN_ID)
+            self.assertEqual(cde_mock.call_count, 1)
+            self.assertEqual(send_mock.call_count, 8)
+            connection_mock.assert_called()
+
+            LOG.debug("wait_fixed_cls_mock.mock_calls: %s", wait_fixed_cls_mock.mock_calls)
+            LOG.debug("wait_exp_obj_mock.mock_calls: %s", wait_exp_obj_mock.mock_calls)
+
+            # Ignore the first call, that comes from tenacity_wait_mocks.
+            # The first call to tenacity.wait_fixed was performed to get an instance reference (mock)
+            self.assertEqual(wait_fixed_cls_mock.call_args_list[1:],
+                             [call(DEFAULT_RETRY_INTERVAL), call(DEFAULT_RETRY_INTERVAL), call(DEFAULT_RETRY_INTERVAL), call(5), call(6)])
+
+            calls = self._filter_calls(wait_exp_obj_mock, include={""}, skip={"__str__"})
+            self.assertEqual(len(calls), 2)
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(429, None, "Too Many Requests", headers=[(RETRY_AFTER_HEADER, "5")]),
+            _make_response(429, None, "Too Many Requests", headers=[(RETRY_AFTER_HEADER, "6")]),
+            _make_response(500, None, "Internal Server Error"),
+            _make_response(500, None, "Internal Server Error"),
+            _make_response(500, None, "Internal Server Error"),
+            _make_response(201, {"id": TEST_JOB_RUN_ID}, ""),
+        ],
+    )
+    def test_submit_job_retry_after_429_stop_handler(self, send_mock, connection_mock, cde_mock):
+        """
+        Test expectations:
+        3 retries with default retry interval for HTTP 429, without 'Retry-After' header
+        2 retries with 5 and 6 seconds, respectively for HTTP 429, retry interval is parsed from the 'Retry-After' header
+        3 retries for the HTTP 500 Internal Server Error, that is using the default exponential retry mechanism
+        5 calls to stop_after_delay from class RateLimitedStop
+        5 calls to stop_after_attempt from class RateLimitedStop
+        3 calls to stop_after_attempt from class CustomStop, non rate-limited scenario
+
+        """
+        with self.tenacity_wait_mocks() as wait_mocks, \
+                self.tenacity_stop_mocks() as stop_mocks:
+            wait_fixed_cls_mock = wait_mocks[0]
+            wait_exp_obj_mock = wait_mocks[1]
+
+            stop_after_attempt_cls_mock = stop_mocks[0]
+            stop_after_attempt_obj = stop_mocks[1]
+            stop_after_delay_cls_mock = stop_mocks[2]
+            stop_after_delay_obj = stop_mocks[3]
+
+            cde_hook = CdeHook()
+            run_id = cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(run_id, TEST_JOB_RUN_ID)
+            self.assertEqual(cde_mock.call_count, 1)
+            self.assertEqual(send_mock.call_count, 9)
+            connection_mock.assert_called()
+
+            LOG.debug("wait_fixed_cls_mock.mock_calls: %s", wait_fixed_cls_mock.mock_calls)
+            LOG.debug("wait_exp_obj_mock.mock_calls: %s", wait_exp_obj_mock.mock_calls)
+            LOG.debug("stop_after_attempt_cls_mock.mock_calls: %s", stop_after_attempt_cls_mock.mock_calls)
+            LOG.debug("stop_after_attempt_obj.mock_calls: %s", stop_after_attempt_obj.mock_calls)
+            LOG.debug("stop_after_delay_cls_mock.mock_calls: %s", stop_after_delay_cls_mock.mock_calls)
+            LOG.debug("stop_after_delay_obj.mock_calls: %s", stop_after_delay_obj.mock_calls)
+
+            # Ignore the first calls, that comes from tenacity_wait_mocks.
+            # The first call to tenacity.wait_fixed was performed to get an instance reference (mock)
+            self.assertEqual(wait_fixed_cls_mock.call_args_list[1:],
+                             [call(DEFAULT_RETRY_INTERVAL), call(DEFAULT_RETRY_INTERVAL), call(DEFAULT_RETRY_INTERVAL), call(5), call(6)])
+
+            calls = self._filter_calls(wait_exp_obj_mock, include={""}, skip={"__str__"})
+            self.assertEqual(len(calls), 3)
+
+            self.assertEqual(stop_after_attempt_cls_mock.call_args_list[1:], [call(CdeHook.DEFAULT_NUM_RETRIES), call(CdeHook.DEFAULT_NUM_RETRIES_RATE_LIMITED)])
+            self.assertEqual(stop_after_delay_cls_mock.call_args_list[1:], [call(CdeHook.DEFAULT_NUM_RETRIES_RATE_LIMITED * DEFAULT_RETRY_INTERVAL)])
+
+            self.assertEqual(stop_after_attempt_obj.call_count, 8)
+            self.assertEqual(stop_after_delay_obj.call_count, 5)
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[_make_response(500, None, "Internal Server Error")] * 24 +
+                    [_make_response(201, {"id": TEST_JOB_RUN_ID}, "")] +
+                    [_make_response(500, None, "Internal Server Error")]
+    )
+    def test_submit_job_custom_stop_normal_stop_after_attempts(self, send_mock, connection_mock, cde_mock):
+        """
+        This test verifies if we have 24 HTTP 500 server responses, tenacity.stop_after_attempt is called 24 times.
+        Then, we have a successful HTTP 201 response, we don't call tenacity.stop_after_attempt anymore.
+        It's also verified that tenacity.stop_after_delay is not called for regular Server errors.
+        The last HTTP 500 Internal Server Error as a side-effect is just added to prove that after HTTP 201, none of the stop objects are called.
+        """
+        def stop_after_attempt_impl(retry_state):
+            LOG.debug("Called stop_after_attempt_impl on mock. Arg: %s", retry_state)
+            return True if retry_state.attempt_number >= 25 else False
+
+        with self.tenacity_wait_mocks() as wait_mocks, \
+                self.tenacity_stop_mocks(stop_after_attempt_impl=stop_after_attempt_impl) as stop_mocks:
+            wait_fixed_cls_mock = wait_mocks[0]
+            wait_exp_obj_mock = wait_mocks[1]
+
+            stop_after_attempt_cls_mock = stop_mocks[0]
+            stop_after_attempt_obj = stop_mocks[1]
+            stop_after_delay_cls_mock = stop_mocks[2]
+            stop_after_delay_obj = stop_mocks[3]
+
+            cde_hook = CdeHook()
+            run_id = cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(run_id, TEST_JOB_RUN_ID)
+            self.assertEqual(cde_mock.call_count, 1)
+            self.assertEqual(send_mock.call_count, 25)
+            connection_mock.assert_called()
+
+            LOG.debug("wait_fixed_cls_mock.mock_calls: %s", wait_fixed_cls_mock.mock_calls)
+            LOG.debug("wait_exp_obj_mock.mock_calls: %s", wait_exp_obj_mock.mock_calls)
+            LOG.debug("stop_after_attempt_cls_mock.mock_calls: %s", stop_after_attempt_cls_mock.mock_calls)
+            LOG.debug("stop_after_attempt_obj.mock_calls: %s", stop_after_attempt_obj.mock_calls)
+            LOG.debug("stop_after_delay_cls_mock.mock_calls: %s", stop_after_delay_cls_mock.mock_calls)
+            LOG.debug("stop_after_delay_obj.mock_calls: %s", stop_after_delay_obj.mock_calls)
+
+            # Assert 24 calls to stop_after_attempt from CustomStop, non rate-limited scenario
+            # Assert 0 calls to stop_after_delay_obj from CustomStop, non rate-limited scenario
+            self.assertEqual(stop_after_attempt_obj.call_count, 24)
+            self.assertEqual(stop_after_delay_obj.call_count, 0)
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[_make_response(429, None, "Too Many Requests", headers=[(RETRY_AFTER_HEADER, "5")])] * 24 +
+                    [_make_response(201, {"id": TEST_JOB_RUN_ID}, "")] +
+                    [_make_response(500, None, "Internal Server Error")] * 999
+    )
+    def test_submit_job_custom_stop_retry_after_429_stop_after_attempts(self, send_mock, connection_mock, cde_mock):
+        """
+        This test verifies if we have 24 HTTP 429 server responses, tenacity.stop_after_attempt and tenacity.stop_after_delay is called 24 times.
+        Then, we have a successful HTTP 201 response, we don't call tenacity.stop_after_attempt and tenacity.stop_after_delay anymore.
+        """
+
+        def stop_after_attempt_impl(retry_state):
+            LOG.debug("Called stop_after_attempt_impl on mock. Arg: %s", retry_state)
+            return True if retry_state.attempt_number >= 25 else False
+
+        with self.tenacity_wait_mocks() as wait_mocks, \
+                self.tenacity_stop_mocks(stop_after_attempt_impl=stop_after_attempt_impl) as stop_mocks:
+            wait_fixed_cls_mock = wait_mocks[0]
+            wait_exp_obj_mock = wait_mocks[1]
+
+            stop_after_attempt_cls_mock = stop_mocks[0]
+            stop_after_attempt_obj = stop_mocks[1]
+            stop_after_delay_cls_mock = stop_mocks[2]
+            stop_after_delay_obj = stop_mocks[3]
+
+            cde_hook = CdeHook()
+            run_id = cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(run_id, TEST_JOB_RUN_ID)
+            self.assertEqual(cde_mock.call_count, 1)
+            self.assertEqual(send_mock.call_count, 25)
+            connection_mock.assert_called()
+
+            LOG.debug("wait_fixed_cls_mock.mock_calls: %s", wait_fixed_cls_mock.mock_calls)
+            LOG.debug("wait_exp_obj_mock.mock_calls: %s", wait_exp_obj_mock.mock_calls)
+            LOG.debug("stop_after_attempt_cls_mock.mock_calls: %s", stop_after_attempt_cls_mock.mock_calls)
+            LOG.debug("stop_after_attempt_obj.mock_calls: %s", stop_after_attempt_obj.mock_calls)
+            LOG.debug("stop_after_delay_cls_mock.mock_calls: %s", stop_after_delay_cls_mock.mock_calls)
+            LOG.debug("stop_after_delay_obj.mock_calls: %s", stop_after_delay_obj.mock_calls)
+
+            # Assert 24 calls to stop_after_attempt & stop_after_delay_obj from CustomStop, rate-limited scenario
+            self.assertEqual(stop_after_attempt_obj.call_count, 24)
+            self.assertEqual(stop_after_delay_obj.call_count, 24)
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[_make_response(429, None, "Too Many Requests", headers=[(RETRY_AFTER_HEADER, "5")])] * 5 +
+                    [_make_response(201, {"id": TEST_JOB_RUN_ID}, "")]
+    )
+    def test_submit_job_custom_stop_retry_after_429_stop_after_delay(self, send_mock, connection_mock, cde_mock):
+        def stop_after_delay_impl(retry_state):
+            LOG.debug("Called stop_after_delay_impl on mock. Arg: %s", retry_state)
+            return True if retry_state.seconds_since_start >= 5 else False
+
+        def wait_1_second(retry_state):
+            LOG.debug("Called wait_fixed or wait_exponential mock. Arg: %s", retry_state)
+            return 1
+
+        with self.tenacity_wait_mocks(wait_impl=wait_1_second) as wait_mocks, \
+                self.tenacity_stop_mocks(stop_after_delay_impl=stop_after_delay_impl) as stop_mocks:
+            wait_fixed_cls_mock = wait_mocks[0]
+            wait_exp_obj_mock = wait_mocks[1]
+
+            stop_after_attempt_cls_mock = stop_mocks[0]
+            stop_after_attempt_obj = stop_mocks[1]
+            stop_after_delay_cls_mock = stop_mocks[2]
+            stop_after_delay_obj = stop_mocks[3]
+
+            cde_hook = CdeHook()
+            run_id = cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(run_id, TEST_JOB_RUN_ID)
+            self.assertEqual(cde_mock.call_count, 1)
+            self.assertEqual(send_mock.call_count, 6)
+            connection_mock.assert_called()
+
+            LOG.debug("wait_fixed_cls_mock.mock_calls: %s", wait_fixed_cls_mock.mock_calls)
+            LOG.debug("wait_exp_obj_mock.mock_calls: %s", wait_exp_obj_mock.mock_calls)
+            LOG.debug("stop_after_attempt_cls_mock.mock_calls: %s", stop_after_attempt_cls_mock.mock_calls)
+            LOG.debug("stop_after_attempt_obj.mock_calls: %s", stop_after_attempt_obj.mock_calls)
+            LOG.debug("stop_after_delay_cls_mock.mock_calls: %s", stop_after_delay_cls_mock.mock_calls)
+            LOG.debug("stop_after_delay_obj.mock_calls: %s", stop_after_delay_obj.mock_calls)
+
+            # Assert 5 calls to stop_after_attempt & stop_after_delay_obj from CustomStop, rate-limited scenario
+            self.assertEqual(stop_after_attempt_obj.call_count, 5)
+            self.assertEqual(stop_after_delay_obj.call_count, 5)
+
+    @staticmethod
+    def _filter_calls(mock, include: Set[str], skip: Set[str]):
+        captured_calls = []
+        for name, args, kwargs in mock.mock_calls:
+            if name in skip:
+                LOG.debug("Skipping call from verification. name: %s, args: %s, kwargs: %s", name, args, kwargs)
+                continue
+            elif name in include:
+                LOG.debug("Call details: name: %s, args: %s, kwargs: %s", name, args, kwargs)
+                captured_calls.append((name, args, kwargs))
+            else:
+                raise ValueError("Unexpected call, not in include list nor exclude list! "
+                                 "mock: {}, name: {}, args: {}, kwargs: {}".format(mock, name, args, kwargs))
+        return captured_calls
 
     @mock.patch.object(
         CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
