@@ -115,6 +115,23 @@ must have already been created via the specified virtual cluster jobs API.
 | api_retries | int | The number of times to retry an API request in the event of a connection failure or non-fatal API error. The parameter can be used to overwrite the value used by the cde hook used by the operator. The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'. The `AIRFLOW__CDE__DEFAULT_NUM_RETRIES` environmemt variable can be used to set the value. Default value in the cde hook: `9` |
 | api_timeout | int | The timeout in seconds after which, if no response has been received from the API, a request should be abandoned and retried. The parameter can be used to overwrite the value used by the cde hook. The value precedence is 'parameter' > 'env var' > 'airflow.cfg' > 'default'. The `AIRFLOW__CDE__DEFAULT_API_TIMEOUT` environmemt variable can be used to set the value. The timeout value for the job run status check is calculated separately. The tenth of the `api_timeout` value is used if it is not less than `CdeHook.DEFAULT_API_TIMEOUT // 10`. If it is less the `CdeHook.DEFAULT_API_TIMEOUT // 10` value will be used. Default value in the cde hook: `300` |
 
+##### Retries
+The `api_retries` parameter from the above table specifies the number of times to retry an API request.
+However, in case of [HTTP 429 Too Many Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429), 
+the retry logic is different, and it is working as follows:
+
+The rate limited retries are stopped either if we reached one of: 
+1. More than 2 hours of time frame of retrying
+2. 1800 retries, 4 seconds between retries gives 2 hours of retrying.
+No more retries will be performed if any of these conditions is satisfied.
+
+In case of normal retries, retrying will be performed with exponential backoff.
+In case of rate-limited retries, a fixed wait will be performed.
+To be more precise, the wait time between retries is parsed from the server's [Retry-After](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After) HTTP response header.
+So essentially it is up to the server to control the waiting time of the client.
+If the Retry-After header is not found or cannot be parsed, the default retry interval of 4 seconds will be used.
+
+
 Example CDE operator DAG snippet:
 ```python
 cde_task = CdeRunJobOperator(
@@ -158,4 +175,4 @@ You can learn more about CDE concepts [here](https://docs.cloudera.com/data-engi
 
 More examples you can find with [example DAGs](../docs/examples/README.md). 
 
-Please refer the the [official documentation](https://docs.cloudera.com/data-engineering/cloud/orchestrate-workflows/topics/cde-airflow-dag-pipeline.html) for how to integrate these operators into your pipelines.
+Please refer to the [official documentation](https://docs.cloudera.com/data-engineering/cloud/orchestrate-workflows/topics/cde-airflow-dag-pipeline.html) for how to integrate these operators into your pipelines.
