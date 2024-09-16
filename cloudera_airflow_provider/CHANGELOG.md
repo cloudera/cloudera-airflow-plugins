@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
+
+## [2.1.3] - 2024-09-16
+- CDERunJobOperator 429 response code attempts are now counted separately during retries
+- TaskFlow decorator implementation for CDERunJobOperator
+- CdpAccessKeyV2TokenAuth is now usable with Private Cloud CDE deployments
 - CI fixes.
 - Add support for the Test connection functionality on the Airflow UI
 
