@@ -450,6 +450,10 @@ class CdeHook(BaseHook):  # type: ignore
                 region=self.connection.region,
                 cdp_endpoint=self.connection.cdp_endpoint,
                 altus_iam_endpoint=self.connection.altus_iam_endpoint,
+                insecure=self.connection.insecure,
+                custom_ca_path=self.connection.ca_cert_path_access_key_auth,
+                form_factor=self.connection.form_factor,
+                env_crn=self.connection.env_crn,
             )
 
             cache_mech_extra_kw = {}
@@ -472,7 +476,7 @@ class CdeHook(BaseHook):  # type: ignore
             )
             cde_token = cde_auth.get_cde_authentication_token().access_token
             self.log.debug("CDE token successfully acquired")
-            if not self.connection.region:
+            if not self.connection.region and cdp_auth.region is not None:
                 # Save region, so that any subsequent calls would not need to infer it again
                 self.log.debug(
                     "Saving inferred region %s to connection with connection_id %s",

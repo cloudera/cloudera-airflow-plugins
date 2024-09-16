@@ -43,6 +43,7 @@ from urllib.parse import urlparse
 
 from airflow.models.connection import Connection
 from airflow.utils.session import provide_session
+from cloudera.cdp.security.cdp_security import FormFactor
 
 LOG = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ class CdeConnection(Connection):
         altus_iam_endpoint: str | None = None,
         insecure: bool = False,
         region: str | None = None,
+        ca_cert_path_access_key_auth: str | None = None,
+        form_factor: FormFactor | None = None,
+        env_crn: str | None = None,
     ) -> None:
         super().__init__(
             conn_id=connection_id,
@@ -86,6 +90,9 @@ class CdeConnection(Connection):
         self.altus_iam_endpoint = altus_iam_endpoint
         self.insecure = insecure
         self.region = region
+        self.ca_cert_path_access_key_auth = ca_cert_path_access_key_auth
+        self.form_factor = form_factor
+        self.env_crn = env_crn
 
     def is_external(self) -> bool:
         """Checks if connection is external. External connections
@@ -188,6 +195,13 @@ class CdeConnection(Connection):
             cls.CDE_API_PREFIX if cls.__internal_connection(connection_url.hostname) else connection_url.path
         )
 
+        form_factor = None
+        form_factor_extra = extra.get("form_factor")
+        if form_factor_extra == "public":
+            form_factor = FormFactor.PUBLIC_CLOUD
+        elif form_factor_extra == "private":
+            form_factor = FormFactor.PRIVATE_CLOUD
+
         return cls(
             conn.conn_id,
             connection_url.scheme,
@@ -203,6 +217,9 @@ class CdeConnection(Connection):
             altus_iam_endpoint=extra.get("altus_iam_endpoint"),
             insecure=extra.get("insecure", False),
             region=extra.get("region"),
+            ca_cert_path_access_key_auth=extra.get("ca_cert_path_access_key_auth"),
+            form_factor=form_factor,
+            env_crn=extra.get("env_crn"),
         )
 
     def __repr__(self) -> str:
