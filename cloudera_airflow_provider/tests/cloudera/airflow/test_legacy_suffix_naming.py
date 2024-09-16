@@ -82,6 +82,8 @@ TEST_DEFAULT_CONNECTION = Connection(
 
 
 class CdeRunJobOperatorTest(TestCase):
+    """Test cases for CdeRunJobOperator"""
+
     @mock.patch.object(
         CdeHook,
         'get_connection',

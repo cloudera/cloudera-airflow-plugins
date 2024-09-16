@@ -50,7 +50,6 @@ from airflow.models.dag import DAG
 from airflow.models.taskinstance import TaskInstance
 from cloudera.airflow.providers.hooks.cde import CdeHook
 from cloudera.airflow.providers.operators.cde import FORMAT_DATE_TIME, CdeRunJobOperator
-from tests.providers.cloudera.utils import _get_call_arguments
 
 TEST_JOB_NAME = "testjob"
 TEST_JOB_RUN_ID = 10
@@ -74,7 +73,8 @@ TEST_CONTEXT = {
 # for airflow < 2.2.0 there's no run_id, so we use execution_date instead
 VALID_REQUEST_IDS = [
     f"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_ID}#{TEST_AIRFLOW_TASK_ID}#1",
-    f"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_EXECUTION_DATE.strftime(FORMAT_DATE_TIME)}#{TEST_AIRFLOW_TASK_ID}#1",
+    f"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_EXECUTION_DATE.strftime(FORMAT_DATE_TIME)}"
+    + f"#{TEST_AIRFLOW_TASK_ID}#1",
 ]
 TEST_HOST = "vc1.cde-2.cdp-3.cloudera.site"
 TEST_SCHEME = "http"
@@ -106,6 +106,7 @@ TEST_DEFAULT_CONNECTION = Connection(
 
 
 def mock_task_instance_for_context():
+    """Mock the task instance for the context"""
     TEST_CONTEXT["task_instance"] = TaskInstance(
         execution_date=TEST_AIRFLOW_RUN_EXECUTION_DATE,
         task=BaseOperator(
@@ -116,7 +117,6 @@ def mock_task_instance_for_context():
 
 @mock.patch.object(CdeHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
 class CdeRunJobOperatorTest(unittest.TestCase):
-
     """Test cases for CDE operator"""
 
     def test_init(self, get_connection: Mock):
@@ -196,6 +196,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         self.assertEqual(cde_operator.get_hook().num_retries, TEST_API_RETRIES)
         self.assertEqual(cde_operator.get_hook().api_timeout, TEST_API_TIMEOUT)
 
+    # pylint: disable=unused-argument
     @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
     @mock.patch.object(CdeHook, "kill_job_run")
     @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
@@ -213,9 +214,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         )
         get_connection.assert_called()
         cde_operator.execute(TEST_CONTEXT)
-        # Python 3.8 works with called_args = submit_mock.call_args.kwargs,
-        # but kwargs method is missing in <=3.7.1
-        called_args = _get_call_arguments(submit_mock.call_args)
+        called_args = submit_mock.call_args.kwargs
         self.assertIsInstance(called_args, dict)
         self.assertEqual(dict(called_args["variables"], **TEST_VARIABLES), called_args["variables"])
         self.validate_context_variables(called_args["variables"])
@@ -250,9 +249,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         )
         get_connection.assert_called()
         cde_operator.execute(TEST_CONTEXT)
-        # Python 3.8 works with called_args = submit_mock.call_args.kwargs,
-        # but kwargs method is missing in <=3.7.1
-        called_args = _get_call_arguments(submit_mock.call_args)
+        called_args = submit_mock.call_args.kwargs
         self.assertEqual(dict(called_args["variables"], **TEST_VARIABLES), called_args["variables"])
         self.validate_context_variables(called_args["variables"])
         self.validate_request_id(called_args["request_id"])
@@ -275,7 +272,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         cde_operator._job_run_id = 1  # pylint: disable=W0212
         cde_operator.on_kill()
         kill_job_mock.assert_called()
-        self.assertTrue(cde_operator._job_run_finished)
+        self.assertTrue(cde_operator._job_run_finished)  # pylint: disable=W0212
 
     @mock.patch.object(CdeHook, "check_job_run_status", return_value="starting")
     def test_wait_for_job_times_out(self, check_job_mock, get_connection):
@@ -363,7 +360,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         )
         kill_mock.assert_called()
         check_job_mock.assert_has_calls([call(TEST_JOB_RUN_ID)])
-        submit_called_args = _get_call_arguments(submit_mock.call_args)
+        submit_called_args = submit_mock.call_args.kwargs
         self.validate_request_id(submit_called_args["request_id"])
 
     def test_templating(self, get_connection):
@@ -400,6 +397,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         self.validate_request_id(cde_operator.get_request_id(TEST_CONTEXT))
 
     def validate_request_id(self, request_id):
+        """Validate the request ID"""
         timestamp = request_id.split("#")[-1]
         for valid_request_id in VALID_REQUEST_IDS:
             if f'{valid_request_id}#{timestamp}' == request_id:
@@ -410,6 +408,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         )
 
     def validate_context_variables(self, variables):
+        """Validate the context variables"""
         self.assertEqual(variables["ds"], TEST_CONTEXT["ds"])
         self.assertEqual(variables["ds_nodash"], TEST_CONTEXT["ds_nodash"])
         self.assertEqual(variables["ts"], TEST_CONTEXT["ts"])

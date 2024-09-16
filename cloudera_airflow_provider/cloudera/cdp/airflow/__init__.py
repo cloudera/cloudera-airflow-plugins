@@ -44,7 +44,8 @@ def get_provider_info():  # pragma: no cover , metadata only used for building
         "description": """Provides Operators for running jobs on CDE and CDW.
 Notes:
     - For Airflow 2.x a new dedicated connection type for CDE is available in the UI""",
-        # hook-class-names is deprecated as of Airflow 2.2.0, keeping it for backwards compatibility with older versions
+        # hook-class-names is deprecated as of Airflow 2.2.0,
+        # keeping it for backwards compatibility with older versions
         # https://airflow.apache.org/docs/apache-airflow-providers/index.html#how-to-create-your-own-provider
         "hook-class-names": [
             "cloudera.airflow.providers.hooks.cde.CdeHook",

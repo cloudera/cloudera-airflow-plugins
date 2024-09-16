@@ -44,15 +44,10 @@ import logging
 import os
 import typing
 from datetime import timedelta
-from typing import Any, Callable, Tuple, Type
+from typing import Any
 
 import requests
 import tenacity  # type: ignore
-from cloudera.cdp.model.cde import VirtualCluster
-from cloudera.cdp.security import SecurityError
-from cloudera.cdp.security.cde_security import BearerAuth, CdeApiTokenAuth, CdeTokenAuthResponse
-from cloudera.cdp.security.cdp_security import CdpAccessKeyCredentials, CdpAccessKeyV2TokenAuth
-from cloudera.cdp.security.token_cache import EncryptedFileTokenCacheStrategy
 from tenacity.stop import stop_base
 from tenacity.wait import wait_base
 
@@ -62,10 +57,15 @@ from airflow.hooks.base import BaseHook  # type: ignore
 from airflow.providers.http.hooks.http import HttpHook  # type: ignore
 from cloudera.airflow.providers.hooks import CdpHookException
 from cloudera.airflow.providers.model.connection import CdeConnection
+from cloudera.cdp.model.cde import VirtualCluster
+from cloudera.cdp.security import SecurityError
+from cloudera.cdp.security.cde_security import BearerAuth, CdeApiTokenAuth, CdeTokenAuthResponse
+from cloudera.cdp.security.cdp_security import CdpAccessKeyCredentials, CdpAccessKeyV2TokenAuth
+from cloudera.cdp.security.token_cache import EncryptedFileTokenCacheStrategy
 
 DEFAULT_RETRY_INTERVAL = 4
 RETRY_AFTER_HEADER = "Retry-After"
-time_unit_type = typing.Union[int, float, timedelta]
+TimeUnitType = typing.Union[int, float, timedelta]
 
 HTTP_EMPTY_BODY_RESPONSES = [b'', None]
 
@@ -84,7 +84,7 @@ class CustomWait(wait_base):
         self.wait_exponential_obj: type[tenacity.wait_base] = tenacity.wait_exponential()
         self.start_of_retries_logged = False
 
-    def __call__(self, retry_state: RetryCallState) -> float:
+    def __call__(self, retry_state: tenacity.RetryCallState) -> float:
         if isinstance(retry_state.outcome, tenacity.Future):
             future_outcome: tenacity.Future = retry_state.outcome
             if not future_outcome.failed and isinstance(future_outcome.result(), requests.Response):
@@ -95,23 +95,25 @@ class CustomWait(wait_base):
                     return self._wait_fixed(retry_state, retry_after)
         return self._wait_exponential(retry_state)
 
-    def _wait_exponential(self, retry_state: RetryCallState):
+    def _wait_exponential(self, retry_state: tenacity.RetryCallState):
         self.log.debug("Waiting exponentially between requests")
         return self.wait_exponential_obj(retry_state=retry_state)
 
-    def _wait_fixed(self, retry_state: RetryCallState, retry_after: int):
+    def _wait_fixed(self, retry_state: tenacity.RetryCallState, retry_after: int):
         if not self.start_of_retries_logged:
             self.log.info(
-                "The server is overloaded and this request has been rejected due to server-side throttling. "
-                "The request will be retried regularly until it gets accepted or typically fails after 2 hours of retry."
+                "The server is overloaded and this request has been rejected due "
+                "to server-side throttling. The request will be retried regularly "
+                "until it gets accepted or typically fails after 2 hours of retry."
             )
             self.start_of_retries_logged = True
 
         # Since the value of retry after second can change from response to response,
         # we need to instantiate tenacity.wait_fixed class here to have the correct value on each retry
         self.log.debug(
-            "The server is overloaded and this request has been rejected due to server-side throttling (HTTP 429). "
-            "Waiting fixed interval of %d seconds between requests",
+            "The server is overloaded and this request has been rejected due to "
+            "server-side throttling (HTTP 429). Waiting fixed interval of %d "
+            "seconds between requests",
             retry_after,
         )
         return self.wait_fixed_cls(retry_after)(retry_state=retry_state)
@@ -144,13 +146,15 @@ class CustomWait(wait_base):
 
 
 class RateLimitedStop(stop_base):
+    """Custom stop class to handle Rate-limited retries (HTTP 429 + Retry-After)."""
+
     TEN_MINUTES = 10 * 60
 
     @staticmethod
-    def _to_seconds(time_unit: time_unit_type) -> float:
+    def _to_seconds(time_unit: TimeUnitType) -> float:
         return float(time_unit.total_seconds() if isinstance(time_unit, timedelta) else time_unit)
 
-    def __init__(self, logger, num_retries: int, time_unit: time_unit_type) -> None:
+    def __init__(self, logger, num_retries: int, time_unit: TimeUnitType) -> None:
         self.log = logger
         self.num_retries = num_retries
         self.max_seconds_of_retries = self._to_seconds(time_unit)
@@ -160,7 +164,7 @@ class RateLimitedStop(stop_base):
         )
         self.log_start = datetime.datetime.now()
 
-    def __call__(self, retry_state: RetryCallState) -> float:
+    def __call__(self, retry_state: tenacity.RetryCallState) -> float:
         seconds_since_start = retry_state.seconds_since_start
         seconds_left = self.max_seconds_of_retries - seconds_since_start
 
@@ -203,19 +207,23 @@ class CustomStop(stop_base):
     """
     Custom stop class to handle Rate-limited retries (HTTP 429 + Retry-After) in a special way.
     Under normal circumstances, we use tenacity's stop_after_attempt method.
-    If the server's HTTP response code is 429, we retry with fixed delays between retries, please refer to RateLimitedStop for more details.
-    Otherwise, with the normal wait, we stop after default_num_retries.
+    If the server's HTTP response code is 429, we retry with fixed delays between retries, please refer to
+    RateLimitedStop for more details. Otherwise, with the normal wait, we stop after default_num_retries.
     """
 
     def __init__(
-        self, logger, default_num_retries: int, rate_limited_num_retries: int, retry_time_span: time_unit_type
+        self,
+        logger,
+        default_num_retries: int,
+        rate_limited_num_retries: int,
+        retry_time_span: TimeUnitType,
     ) -> None:
         self.log = logger
         self.default_num_retries = default_num_retries
         self.normal_stop = tenacity.stop_after_attempt(self.default_num_retries)
         self.rate_limited_stop = RateLimitedStop(logger, rate_limited_num_retries, retry_time_span)
 
-    def __call__(self, retry_state: RetryCallState) -> float:
+    def __call__(self, retry_state: tenacity.RetryCallState) -> float:
         if isinstance(retry_state.outcome, tenacity.Future):
             future_outcome: tenacity.Future = retry_state.outcome
             if not future_outcome.failed and isinstance(future_outcome.result(), requests.Response):
@@ -494,7 +502,7 @@ class CdeHook(BaseHook):  # type: ignore
         """
         vcluster_endpoint = self.connection.get_vcluster_jobs_api_url()
         try:
-            response = self._do_api_call("GET", f"/info", self.api_timeout)
+            response = self._do_api_call("GET", "/info", self.api_timeout)
             if response is None:
                 status = False
                 msg = f"Unexpected 'None' response while connecting to '{vcluster_endpoint}'."
@@ -507,9 +515,12 @@ class CdeHook(BaseHook):  # type: ignore
             else:
                 status = True
                 msg = f"Connecting to Virtual Cluster '{response.get('appName')}' was successful."
-        except Exception as err:
+        except Exception as err:  # pylint: disable=broad-except
             status = False
-            msg = f"Testing the connection to '{self.connection.get_vcluster_jobs_api_url()}' failed, error: {err}"
+            msg = (
+                f"Testing the connection to '{self.connection.get_vcluster_jobs_api_url()}' "
+                f"failed, error: {err}"
+            )
 
         return status, msg
 
@@ -526,8 +537,9 @@ class CdeHook(BaseHook):  # type: ignore
 
         :param job_name: The name of the job definition to run (should already be
             defined in the virtual cluster).
-        :param request_id: Should be unique for each task attempt, if the run with similar request_id exists,
-            jobs API will return 409 response code with the previously created run_id that had same request_id.
+        :param request_id: Should be unique for each task attempt, if the run with similar
+            request_id exists, jobs API will return 409 response code with the previously
+            created run_id that had same request_id.
         :param variables: Runtime variables to pass to job run
         :param overrides: Overrides of job parameters for this run
         :return: the job run ID for a successful submission or an AirflowException
@@ -626,6 +638,7 @@ class RetryHandler:
         """The set of unique API call error messages if any."""
         return self._errors
 
+    # pylint: disable=too-many-return-statements
     def __call__(self, retry_state: tenacity.RetryCallState) -> bool:
         if isinstance(retry_state.outcome, tenacity.Future):
             future_outcome: tenacity.Future = retry_state.outcome
@@ -634,7 +647,7 @@ class RetryHandler:
         if future_outcome.failed:
             if isinstance(future_outcome.exception(), self.ALWAYS_RETRY_EXCEPTIONS):
                 self.log.warning(
-                    f"Attempt {retry_state.attempt_number} failed with {future_outcome.exception()}"
+                    "Attempt %d failed with %s", retry_state.attempt_number, future_outcome.exception()
                 )
                 return self.CONTINUE_RETRIES
             else:
@@ -645,14 +658,14 @@ class RetryHandler:
                 status = str(response.status_code) + ":" + response.reason
                 error_msg = (status + ":" + response.text.rstrip()) if response.text else status
                 if response.status_code >= 400:
-                    self.log.warning(f"Attempt {retry_state.attempt_number} finished with {error_msg}")
+                    self.log.warning("Attempt %d finished with %s", retry_state.attempt_number, error_msg)
                 self._errors.add(error_msg)
                 if response.status_code < 400:
                     return self.EXIT_RETRIES
                 elif response.status_code == 409:
                     self.log.warning(
-                        f"Job run has been already triggered,"
-                        f" waiting for run {response.text.rstrip()} to finish"
+                        "Job run has been already triggered, waiting for run %s to finish",
+                        response.text.rstrip(),
                     )
                     return self.EXIT_RETRIES
                 elif response.status_code == 429:
