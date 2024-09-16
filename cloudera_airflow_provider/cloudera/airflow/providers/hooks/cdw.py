@@ -204,31 +204,32 @@ class CdwHook(HiveCliHook):
 
                 if verbose:
                     self.log.info("%s", " ".join(self._prepare_cli_cmd(hide_secrets=True)))
-                sub_process = subprocess.Popen(
+                with subprocess.Popen(
                     hive_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     cwd=tmp_dir,
                     close_fds=True,
                     start_new_session=True,
-                )
-                self.sub_process = sub_process
-                stdout = ""
-                while True:
-                    line = sub_process.stdout.readline()
-                    if not line:
-                        break
-                    stdout += line.decode("UTF-8")
-                    if verbose:
-                        self.log.info(line.decode("UTF-8").strip())
-                sub_process.wait()
+                ) as sub_process:
+                    self.sub_process = sub_process
+                    stdout = ""
+                    while True:
+                        line = sub_process.stdout.readline()
+                        if not line:
+                            break
+                        stdout += line.decode("UTF-8")
+                        if verbose:
+                            self.log.info(line.decode("UTF-8").strip())
+                    sub_process.wait()
 
-                if sub_process.returncode:
-                    raise AirflowException(stdout)
+                    if sub_process.returncode:
+                        raise AirflowException(stdout)
 
-                return stdout
+                    return stdout
 
     def kill(self):
+        """Kills the hive job."""
         if hasattr(self, "sub_process") and self.sub_process is not None:
             if self.sub_process.poll() is None:
                 print("Killing the Hive job")

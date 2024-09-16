@@ -126,7 +126,8 @@ class CdeConnection(Connection):
         connection = session.query(Connection).filter_by(conn_id=self.conn_id).one_or_none()
         if not connection:
             LOG.warning(
-                "Can not save region. The connection with connection_id: %s was not found", self.conn_id
+                "Can not save region. The connection with connection_id: %s was not found",
+                self.conn_id,
             )
             return
         extra = json.loads(connection.extra) if connection.extra else {}

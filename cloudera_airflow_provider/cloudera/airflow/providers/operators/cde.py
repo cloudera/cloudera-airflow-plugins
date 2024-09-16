@@ -38,8 +38,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowConfigException, AirflowException
+from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from cloudera.airflow.providers.hooks.cde import CdeHook, CdeHookException
 
@@ -104,7 +103,7 @@ class CdeRunJobOperator(BaseOperator):
     Note: all parameters below can also be provided through the
     ``default_args`` field of the DAG.
 
-    .. seealso::
+    :see:
         For more information on how to use this operator, take a look at the guide:
         :ref:`howto/operator:CdeRunJobOperator`
 
@@ -187,6 +186,7 @@ class CdeRunJobOperator(BaseOperator):
         self._job_run_finished: bool = False
 
     def execute(self, context):
+        """Execute the operator"""
         self._job_run_id = self.submit_job(context)
         if self.wait:
             try:
@@ -197,6 +197,7 @@ class CdeRunJobOperator(BaseOperator):
                     self.on_kill()
 
     def on_kill(self):
+        """Kill the running job"""
         if self._hook and self._job_run_id > 0:
             self.log.info("Cancelling job run: %d", self._job_run_id)
             try:
@@ -219,7 +220,9 @@ class CdeRunJobOperator(BaseOperator):
     def get_hook(self) -> CdeHook:
         """Return CdeHook using specified connection"""
         return CdeHook(
-            connection_id=self.connection_id, num_retries=self.api_retries, api_timeout=self.api_timeout
+            connection_id=self.connection_id,
+            num_retries=self.api_retries,
+            api_timeout=self.api_timeout,
         )
 
     def submit_job(self, context) -> int:
@@ -239,7 +242,10 @@ class CdeRunJobOperator(BaseOperator):
         self.log.debug(f"Request ID is {request_id}")
         try:
             job_run_id = self._hook.submit_job(
-                self.job_name, request_id=request_id, variables=merged_vars, overrides=self.overrides
+                self.job_name,
+                request_id=request_id,
+                variables=merged_vars,
+                overrides=self.overrides,
             )
         except CdeHookException as err:
             msg = f"Issue while submitting job. Exiting. Error details: {err}"
@@ -308,7 +314,7 @@ class CdeRunJobOperator(BaseOperator):
             # so we should use execution_date for backward compatibility
             try:
                 run_identifier = context['task_instance'].run_id
-            except Exception as err:
+            except Exception as err:  # pylint: disable=broad-except
                 self.log.warning(
                     f"Missing run_id field for task instance {err}, using execution_date as run identifier"
                 )

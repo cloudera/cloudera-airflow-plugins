@@ -43,22 +43,33 @@ import unittest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# workaround for https://github.com/apache/airflow/issues/34109
+# TaskInstanceNote has a foreign key `user_id` (and thus a dependency) to User, but it
+# seems `airflow.models.taskinstance` gets loaded first resulting in an error. Manually
+# importing User here fixes the issue.
+try:
+    from airflow.auth.managers.fab.models import User  # noqa pylint: disable=unused-import
+except ImportError:
+    pass
+try:
+    from airflow.providers.fab.auth_manager.models import User  # noqa pylint: disable=unused-import
+except ImportError:
+    pass
 from cloudera.airflow.providers.model.connection import CdeConnection
 
 
 class CdeConnectionTest(unittest.TestCase):
-
     """Test cases for CDE connection"""
 
     @classmethod
     def setUpClass(cls):
         cls.engine = create_engine("sqlite:///:memory:")
-        Session = sessionmaker(bind=cls.engine)
-        cls.session = Session()
+        session = sessionmaker(bind=cls.engine)
+        cls.session = session()
         CdeConnection.metadata.bind = cls.engine
 
     def setUp(self):
-        CdeConnection.metadata.create_all()
+        CdeConnection.metadata.create_all(self.engine)
 
     def tearDown(self):
         CdeConnection.metadata.drop_all(self.engine)
@@ -91,6 +102,7 @@ class CdeConnectionTest(unittest.TestCase):
 
     @classmethod
     def create_test_connection(cls):
+        """Create a test connection"""
         return CdeConnection(
             connection_id="id",
             host="4spn57c6.cde-lvj5dccb.dex-dev.xcu2-8y8x.dev.cldr.work",

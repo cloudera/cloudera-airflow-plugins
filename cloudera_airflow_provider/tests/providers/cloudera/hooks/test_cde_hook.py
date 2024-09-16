@@ -38,23 +38,19 @@
 from __future__ import annotations
 
 import contextlib
-import datetime
 import logging
 import os
 import unittest
 from concurrent.futures import Future
 from json import JSONDecodeError
-from typing import Callable, List, Set
+from typing import Callable
 from unittest import mock
-from unittest.mock import Mock, call
+from unittest.mock import call
 
-import tenacity
-from cloudera.cdp.security.cde_security import CdeApiTokenAuth, CdeTokenAuthResponse
 from requests import Session
-from requests.exceptions import ConnectionError, HTTPError, Timeout
+from requests.exceptions import ConnectionError, HTTPError, Timeout  # pylint: disable=redefined-builtin
 from retrying import RetryError  # type: ignore
 
-from airflow.configuration import conf
 from airflow.exceptions import AirflowException
 from airflow.hooks.base_hook import BaseHook
 from airflow.models import Connection
@@ -63,10 +59,8 @@ from cloudera.airflow.providers.hooks.cde import (
     RETRY_AFTER_HEADER,
     CdeHook,
     CdeHookException,
-    CustomStop,
-    CustomWait,
-    RetryHandler,
 )
+from cloudera.cdp.security.cde_security import CdeApiTokenAuth, CdeTokenAuthResponse
 from tests.providers.cloudera.utils import _get_call_arguments, _make_response
 
 LOG = logging.getLogger(__name__)
@@ -91,7 +85,7 @@ TEST_OVERRIDES = {"spark": {"conf": {"myparam": "val_{{ ds_nodash }}"}}}
 TEST_AK = "access_key"
 TEST_PK = "private_key_xxxxx_xxxxx_xxxxx_xxxxx"
 TEST_CUSTOM_CA_CERTIFICATE = "/ca_cert/letsencrypt-stg-root-x1.pem"
-TEST_EXTRA = f'{{"ca_cert_path": "{TEST_CUSTOM_CA_CERTIFICATE}"}}'
+TEST_EXTRA = f'{{"ca_cert_path": "{TEST_CUSTOM_CA_CERTIFICATE}", "region": "us-west-1"}}'
 GET_CDE_AUTH_TOKEN_METHOD = "cloudera.cdp.security.cde_security.CdeApiTokenAuth.get_cde_authentication_token"
 GET_AIRFLOW_CONFIG = "airflow.providers.cloudera.hooks.cde_hook.conf"
 INVALID_JSON_STRING = "{'invalid_json"
@@ -122,6 +116,7 @@ VALID_CDE_TOKEN_AUTH_REQUEST_RESPONSE = _make_response(
 VALID_CDE_TOKEN_AUTH_RESPONSE = CdeTokenAuthResponse.from_response(VALID_CDE_TOKEN_AUTH_REQUEST_RESPONSE)
 
 
+# pylint: disable=too-many-public-methods
 class CdeHookTest(unittest.TestCase):
     """Unit tests for CdeHook"""
 
@@ -129,12 +124,15 @@ class CdeHookTest(unittest.TestCase):
     def tenacity_wait_mocks(self, wait_impl: Callable = None):
         """
         Creates mocks for tenacity.wait_fixed and tenacity.wait_exponential.
-        The tests require to verify calls of the constructor of wait_fixed to check if the parameter was correct.
-        Also, test can be interested in the call count of the wait instance for exponential waits,
-        therefore we yield these two.
-        The default implementation for both wait methods is the same: to wait 0.1 seconds.
+        The tests require to verify calls of the constructor of wait_fixed
+        to check if the parameter was correct. Also, test can be interested in
+        the call count of the wait instance for exponential waits, therefore we
+        yield these two.
+        The default implementation for both wait methods is the same:
+        to wait 0.1 seconds.
         This can be overriden with the method arguments.
-        We call both classes with an arbitrary constructor param (-1111) in order to have access to the stop instance object.
+        We call both classes with an arbitrary constructor param (-1111) in order
+        to have access to the stop instance object.
         """
 
         # This is the actual wait time between requests
@@ -166,11 +164,13 @@ class CdeHookTest(unittest.TestCase):
     ):
         """
         Creates mocks for tenacity.stop_after_attempt and tenacity.stop_after_delay.
-        Some tests may require to verify calls of the constructor of the wait class or calls to the instance of the wait class,
-        therefore we yield all of these.
-        The default implementation for the attempt-based and the delay-based stops is the same: to never stop.
+        Some tests may require to verify calls of the constructor of the wait class
+        or calls to the instance of the wait class, therefore we yield all of these.
+        The default implementation for the attempt-based and the delay-based stops
+        is the same: to never stop.
         This can be overriden with the method arguments.
-        We call both classes with an arbitrary constructor param (-1111) in order to have access to the stop instance object.
+        We call both classes with an arbitrary constructor param (-1111) in order
+        to have access to the stop instance object.
         """
 
         def never_stop_impl(retry_state):
@@ -191,10 +191,17 @@ class CdeHookTest(unittest.TestCase):
             if stop_after_delay_impl:
                 stop_after_delay_obj.side_effect = stop_after_delay_impl
 
-            yield stop_after_attempt_cls_mock, stop_after_attempt_obj, stop_after_delay_cls_mock, stop_after_delay_obj
+            yield (
+                stop_after_attempt_cls_mock,
+                stop_after_attempt_obj,
+                stop_after_delay_cls_mock,
+                stop_after_delay_obj,
+            )
 
     @mock.patch.object(
-        BaseHook, "get_connection", return_value=_get_test_connection(extra='{"insecure": False}')
+        BaseHook,
+        "get_connection",
+        return_value=_get_test_connection(extra='{"insecure": False, "region": "us-west-1"}'),
     )
     def test_wrong_extra_in_connection(self, connection_mock):
         """Test when wrong input is provided in the extra field of the connection"""
@@ -426,7 +433,8 @@ class CdeHookTest(unittest.TestCase):
         """Ensure that 429 errors are handled properly.
         Test expectations:
         3 retries with default retry interval for HTTP 429, without 'Retry-After' header/
-        2 retries with 5 and 6 seconds, respectively for HTTP 429, retry interval is parsed from the 'Retry-After' header.
+        2 retries with 5 and 6 seconds, respectively for HTTP 429, retry interval is parsed from
+        the 'Retry-After' header.
         2 retries for the HTTP 500 responses, that is using the default exponential retry mechanism.
         """
 
@@ -483,8 +491,10 @@ class CdeHookTest(unittest.TestCase):
         """
         Test expectations:
         3 retries with default retry interval for HTTP 429, without 'Retry-After' header
-        2 retries with 5 and 6 seconds, respectively for HTTP 429, retry interval is parsed from the 'Retry-After' header
-        3 retries for the HTTP 500 Internal Server Error, that is using the default exponential retry mechanism
+        2 retries with 5 and 6 seconds, respectively for HTTP 429, retry interval is parsed from
+        the 'Retry-After' header
+        3 retries for the HTTP 500 Internal Server Error, that is using the default exponential
+        retry mechanism
         5 calls to stop_after_delay from class RateLimitedStop
         5 calls to stop_after_attempt from class RateLimitedStop
         3 calls to stop_after_attempt from class CustomStop, non rate-limited scenario
@@ -554,15 +564,17 @@ class CdeHookTest(unittest.TestCase):
     )
     def test_submit_job_custom_stop_normal_stop_after_attempts(self, send_mock, connection_mock, cde_mock):
         """
-        This test verifies if we have 24 HTTP 500 server responses, tenacity.stop_after_attempt is called 24 times.
+        This test verifies if we have 24 HTTP 500 server responses, tenacity.stop_after_attempt is
+        called 24 times.
         Then, we have a successful HTTP 201 response, we don't call tenacity.stop_after_attempt anymore.
         It's also verified that tenacity.stop_after_delay is not called for regular Server errors.
-        The last HTTP 500 Internal Server Error as a side-effect is just added to prove that after HTTP 201, none of the stop objects are called.
+        The last HTTP 500 Internal Server Error as a side effect is just added to prove that after
+        HTTP 201, none of the stop objects are called.
         """
 
         def stop_after_attempt_impl(retry_state):
             LOG.debug("Called stop_after_attempt_impl on mock. Arg: %s", retry_state)
-            return True if retry_state.attempt_number >= 25 else False
+            return retry_state.attempt_number >= 25
 
         with self.tenacity_wait_mocks() as wait_mocks, self.tenacity_stop_mocks(
             stop_after_attempt_impl=stop_after_attempt_impl
@@ -609,13 +621,15 @@ class CdeHookTest(unittest.TestCase):
         self, send_mock, connection_mock, cde_mock
     ):
         """
-        This test verifies if we have 24 HTTP 429 server responses, tenacity.stop_after_attempt and tenacity.stop_after_delay is called 24 times.
-        Then, we have a successful HTTP 201 response, we don't call tenacity.stop_after_attempt and tenacity.stop_after_delay anymore.
+        This test verifies if we have 24 HTTP 429 server responses, tenacity.stop_after_attempt
+        and tenacity.stop_after_delay is called 24 times.
+        Then, we have a successful HTTP 201 response, we don't call tenacity.stop_after_attempt
+        and tenacity.stop_after_delay anymore.
         """
 
         def stop_after_attempt_impl(retry_state):
             LOG.debug("Called stop_after_attempt_impl on mock. Arg: %s", retry_state)
-            return True if retry_state.attempt_number >= 25 else False
+            return retry_state.attempt_number >= 25
 
         with self.tenacity_wait_mocks() as wait_mocks, self.tenacity_stop_mocks(
             stop_after_attempt_impl=stop_after_attempt_impl
@@ -642,7 +656,8 @@ class CdeHookTest(unittest.TestCase):
             LOG.debug("stop_after_delay_cls_mock.mock_calls: %s", stop_after_delay_cls_mock.mock_calls)
             LOG.debug("stop_after_delay_obj.mock_calls: %s", stop_after_delay_obj.mock_calls)
 
-            # Assert 24 calls to stop_after_attempt & stop_after_delay_obj from CustomStop, rate-limited scenario
+            # Assert 24 calls to stop_after_attempt & stop_after_delay_obj from CustomStop,
+            # rate-limited scenario
             self.assertEqual(stop_after_attempt_obj.call_count, 24)
             self.assertEqual(stop_after_delay_obj.call_count, 24)
 
@@ -659,9 +674,11 @@ class CdeHookTest(unittest.TestCase):
     def test_submit_job_custom_stop_retry_after_429_stop_after_delay(
         self, send_mock, connection_mock, cde_mock
     ):
+        """This test verifies if we have 5 HTTP 429 server responses, tenacity.stop_after_delay"""
+
         def stop_after_delay_impl(retry_state):
             LOG.debug("Called stop_after_delay_impl on mock. Arg: %s", retry_state)
-            return True if retry_state.seconds_since_start >= 5 else False
+            return retry_state.seconds_since_start >= 5
 
         def wait_1_second(retry_state):
             LOG.debug("Called wait_fixed or wait_exponential mock. Arg: %s", retry_state)
@@ -692,26 +709,30 @@ class CdeHookTest(unittest.TestCase):
             LOG.debug("stop_after_delay_cls_mock.mock_calls: %s", stop_after_delay_cls_mock.mock_calls)
             LOG.debug("stop_after_delay_obj.mock_calls: %s", stop_after_delay_obj.mock_calls)
 
-            # Assert 5 calls to stop_after_attempt & stop_after_delay_obj from CustomStop, rate-limited scenario
+            # Assert 5 calls to stop_after_attempt & stop_after_delay_obj from CustomStop,
+            # rate-limited scenario
             self.assertEqual(stop_after_attempt_obj.call_count, 5)
             self.assertEqual(stop_after_delay_obj.call_count, 5)
 
     @staticmethod
-    def _filter_calls(mock, include: set[str], skip: set[str]):
+    def _filter_calls(mock_param, include: set[str], skip: set[str]):
         captured_calls = []
-        for name, args, kwargs in mock.mock_calls:
+        for name, args, kwargs in mock_param.mock_calls:
             if name in skip:
                 LOG.debug(
-                    "Skipping call from verification. name: %s, args: %s, kwargs: %s", name, args, kwargs
+                    "Skipping call from verification. name: %s, args: %s, kwargs: %s",
+                    name,
+                    args,
+                    kwargs,
                 )
                 continue
-            elif name in include:
+            if name in include:
                 LOG.debug("Call details: name: %s, args: %s, kwargs: %s", name, args, kwargs)
                 captured_calls.append((name, args, kwargs))
             else:
                 raise ValueError(
-                    "Unexpected call, not in include list nor exclude list! "
-                    "mock: {}, name: {}, args: {}, kwargs: {}".format(mock, name, args, kwargs)
+                    f"Unexpected call, not in include list nor exclude list! "
+                    f"mock_param: {mock_param}, name: {name}, args: {args}, kwargs: {kwargs}"
                 )
         return captured_calls
 
@@ -772,7 +793,9 @@ class CdeHookTest(unittest.TestCase):
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""))
     @mock.patch.object(
-        BaseHook, "get_connection", return_value=_get_test_connection(extra='{"insecure": true}')
+        BaseHook,
+        "get_connection",
+        return_value=_get_test_connection(extra='{"insecure": true, "region": "us-west-1"}'),
     )
     def test_submit_job_insecure(self, connection_mock, session_send_mock, cde_mock):
         """Ensure insecure mode is taken into account"""
@@ -787,7 +810,11 @@ class CdeHookTest(unittest.TestCase):
 
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""))
-    @mock.patch.object(BaseHook, "get_connection", return_value=_get_test_connection(extra="{}"))
+    @mock.patch.object(
+        BaseHook,
+        "get_connection",
+        return_value=_get_test_connection(extra='{"region": "us-west-1"}'),
+    )
     def test_submit_job_no_custom_ca_certificate(self, connection_mock, session_send_mock, cde_mock):
         """Ensure that default TLS security configuration runs fine"""
         cde_hook = CdeHook()
@@ -914,7 +941,7 @@ class CdeHookTest(unittest.TestCase):
     def test_submit_job_custom_env_api_retries_success(self, connection_mock, session_send_mock, cde_mock):
         """Ensure custom api_retries is taken into account from the env var and succeeds as expected.
 
-        Set retry number to 4 times but the third call will be successful so it will succeed.
+        Set retry number to 4 times but the third call will be successful, so it will succeed.
         """
         cde_hook = CdeHook()
         run_id = cde_hook.submit_job(TEST_JOB_NAME)
@@ -943,7 +970,9 @@ class CdeHookTest(unittest.TestCase):
         ],
     )
     @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
-    def test_submit_job_custom_env_api_retries_success(self, connection_mock, session_send_mock, cde_mock):
+    def test_submit_job_custom_env_api_default_num_retries_success(
+        self, connection_mock, session_send_mock, cde_mock
+    ):
         """The default num retries value should be used if a wrong value is set via the
         AIRFLOW__CDE_DEFAULT_NUM_RETRIES environment variable.
         The call will succeed for the 9th call which is the CdeHook.DEFAULT_NUM_RETRIES value.
@@ -1065,7 +1094,9 @@ class CdeHookTest(unittest.TestCase):
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, {"status": TEST_JOB_RUN_STATUS}, ""))
     @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
-    def test_check_job_run_status_timeout(self, connection_mock, session_send_mock, cde_mock):
+    def test_check_job_run_status_success_supplied_timeout(
+        self, connection_mock, session_send_mock, cde_mock
+    ):
         """Test a successful request of job run status from CDE API"""
         cde_hook = CdeHook()
         status = cde_hook.check_job_run_status(TEST_JOB_RUN_ID)
@@ -1086,7 +1117,7 @@ class CdeHookTest(unittest.TestCase):
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(201, {"status": TEST_JOB_RUN_STATUS}, ""))
     @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
-    def test_check_job_run_status_timeout(self, connection_mock, session_send_mock, cde_mock):
+    def test_check_job_run_status_minimal_timeout(self, connection_mock, session_send_mock, cde_mock):
         """Test the used minimal timeout value for job status call"""
         cde_hook = CdeHook()
         status = cde_hook.check_job_run_status(TEST_JOB_RUN_ID)

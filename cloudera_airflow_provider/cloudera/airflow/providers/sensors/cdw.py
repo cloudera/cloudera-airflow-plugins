@@ -39,6 +39,7 @@ from airflow.providers.apache.hive.sensors.hive_partition import HivePartitionSe
 from cloudera.airflow.providers.hooks.cdw import CdwHiveMetastoreHook
 
 
+# pylint: disable=too-many-ancestors; HivePartitionSensor is external
 class CdwHivePartitionSensor(HivePartitionSensor):
     """
     CdwHivePartitionSensor is a subclass of HivePartitionSensor and supposed to implement
@@ -71,6 +72,7 @@ class CdwHivePartitionSensor(HivePartitionSensor):
         self.schema = schema
         self.hook = None
 
+    # pylint: disable=unused-argument,missing-function-docstring; poke is overridden from the parent class
     def poke(self, context):
         if "." in self.table:
             self.schema, self.table = self.table.split(".")

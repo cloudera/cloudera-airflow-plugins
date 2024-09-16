@@ -5,6 +5,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
+- CI fixes.
 - Add support for the Test connection functionality on the Airflow UI
 
 ## [2.1.2] - 2023-04-24

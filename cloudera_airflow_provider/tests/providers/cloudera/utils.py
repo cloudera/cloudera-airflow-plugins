@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 from itertools import tee
 from json import dumps
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Iterable
 
 from requests import Response
 
@@ -68,21 +68,21 @@ def _make_response(status: int, body, reason: str, headers: list[tuple[str, str]
     content = (
         b""
         if body == b""
-        else None
-        if body is None
-        else dumps(body).encode("utf-8")
-        if isinstance(body, dict)
-        else body.encode("utf-8")
+        else (
+            None
+            if body is None
+            else dumps(body).encode("utf-8") if isinstance(body, dict) else body.encode("utf-8")
+        )
     )
 
     resp = Response()
     resp.status_code = status
     resp.encoding = "utf-8"
-    resp._content = content
+    resp._content = content  # pylint: disable=protected-access
     resp.reason = reason
 
     if headers:
-        for h in headers:
-            resp.headers[h[0]] = h[1]
+        for header in headers:
+            resp.headers[header[0]] = header[1]
 
     return resp

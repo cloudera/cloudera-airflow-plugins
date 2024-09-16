@@ -47,7 +47,7 @@ class CdwExecuteQueryOperator(BaseOperator):
     Executes hql code in CDW. This class inherits behavior
     from HiveOperator, and instantiates a CdwHook to do the work.
 
-    .. seealso::
+    :see:
         For more information on how to use this operator, take a look at the guide:
         :ref:`howto/operator:CdwExecuteQueryOperator`
     """
@@ -60,8 +60,9 @@ class CdwExecuteQueryOperator(BaseOperator):
     ui_color = "#522a9f"
     ui_fgcolor = "#fff"
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
+        *args,
         hql,
         schema="default",
         hiveconfs=None,
@@ -71,7 +72,6 @@ class CdwExecuteQueryOperator(BaseOperator):
         # new CDW args
         use_proxy_user=False,  # pylint: disable=unused-argument
         query_isolation=True,  # TODO: implement
-        *args,
         **kwargs,
     ):
 
@@ -99,10 +99,12 @@ class CdwExecuteQueryOperator(BaseOperator):
         )
 
     def prepare_template(self):
+        """Prepare the template fields for rendering"""
         if self.hiveconf_jinja_translate:
             self.hql = re.sub(r"(\$\{(hiveconf:)?([ a-zA-Z0-9_]*)\})", r"{{ \g<3> }}", self.hql)
 
     def execute(self, context):
+        """Execute the query"""
         self.log.info("Executing: %s", self.hql)
         self.hook = self.get_hook()
 
@@ -115,9 +117,11 @@ class CdwExecuteQueryOperator(BaseOperator):
         self.hook.run_cli(hql=self.hql, schema=self.schema, hive_conf=self.hiveconfs)
 
     def dry_run(self):
+        """Dry run the query"""
         self.hook = self.get_hook()
         self.hook.test_hql(hql=self.hql)
 
     def on_kill(self):
+        """Kill the hive query"""
         if self.hook:
             self.hook.kill()
