@@ -97,6 +97,6 @@ def __send_request(uri, data, headers, method, verify):
     response = submit_request(method, uri, headers=headers, data=data, verify=verify)
 
     __log("\nRESPONSE++++++++++++++++++++++++++++++++++++")
-    __log("Response code: %d\n" % response.status_code)
+    __log(f"Response code: {response.status_code}\n")
 
     return response

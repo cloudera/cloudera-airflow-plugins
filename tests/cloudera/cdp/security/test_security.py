@@ -40,7 +40,7 @@ import pytest
 from datetime import datetime, timedelta
 from json import JSONDecodeError, dump, dumps
 from unittest import TestCase, main
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, call
 
 import requests
 from cryptography.fernet import Fernet
@@ -62,6 +62,8 @@ from cloudera.cdp.security.cdp_security import (
     CdpTokenAuthResponse,
     GetCrnError,
     InferRegionError,
+    FormFactor,
+    MissingCDPEndpointError,
 )
 from cloudera.cdp.security.token_cache import (
     CacheError,
@@ -312,6 +314,139 @@ class CDPAUthTokenV2TestCase(TestCase):
         region = CDP_AUTH_AKV2_TEST._infer_region()
         self.assertEqual(make_request_mock.call_count, 3)
         self.assertEqual("eu-1", region)
+
+    @patch.object(CdpAccessKeyV2TokenAuth, '_infer_region', return_value="")
+    @patch(
+        'cloudera.cdp.security.cdp_security.make_request',
+        side_effect=[
+            _make_response(200, {"service": {"environmentCrn": "my_env_crn"}}, ""),
+            _make_response(200, {"token": "my_token", "expireAt": "2024-07-30T16:00:37.268Z"}, ""),
+        ],
+    )
+    def test_private_cloud_auth_token_generation(self, make_request_mock: Mock, infer_region_mock: Mock):
+        """Check pvc auth token generation"""
+        token_auth = CdpAccessKeyV2TokenAuth(
+            service_id=TEST_SERVICE_ID,
+            cdp_cred=CdpAccessKeyCredentials(TEST_AK, TEST_PK),
+            cdp_endpoint="https://console-abc.apps.shared.cloudera.com",
+        )
+
+        # FormFactor is determined from the cdp_endpoint
+        self.assertEqual(token_auth.form_factor, FormFactor.PRIVATE_CLOUD)
+
+        cdp_token = token_auth.generate_workload_auth_token("DE")
+        self.assertEqual(cdp_token.token, "my_token")
+        self.assertEqual(cdp_token.expire_at, "2024-07-30T16:00:37.268Z")
+
+        # Region is not inferred for PVC
+        self.assertEqual(infer_region_mock.call_count, 0)
+        self.assertEqual(make_request_mock.call_count, 2)
+        self.assertEqual(make_request_mock.call_args_list[0],
+                         call("POST",
+                              "https://console-abc.apps.shared.cloudera.com/api/v1/de/describeService",
+                              {"Content-Type": "application/json"},
+                              '{"clusterId": "cluster-5f95z6zc"}',
+                              TEST_AK,
+                              TEST_PK,
+                              False,
+                              True,
+                              ))
+        self.assertEqual(make_request_mock.call_args_list[1],
+                         call("POST",
+                              "https://console-abc.apps.shared.cloudera.com/api/v1/iam/generateWorkloadAuthToken",
+                              {"Content-Type": "application/json"},
+                              '{"workloadName": "DE", "environmentCRN": "my_env_crn"}',
+                              TEST_AK,
+                              TEST_PK,
+                              False,
+                              True,
+                              ))
+
+    @patch(
+        'cloudera.cdp.security.cdp_security.make_request',
+        side_effect=[
+            _make_response(200, {"token": "my_token", "expireAt": "2024-07-30T16:00:37.268Z"}, ""),
+        ],
+    )
+    def test_private_cloud_auth_token_generation_custom_env_crn(self, make_request_mock: Mock):
+        """Check pvc auth token generation when environment crn is given as parameter and altus endpoint differs"""
+        token_auth = CdpAccessKeyV2TokenAuth(
+            service_id=TEST_SERVICE_ID,
+            cdp_cred=CdpAccessKeyCredentials(TEST_AK, TEST_PK),
+            cdp_endpoint="https://console-abc.apps.shared.cloudera.com",
+            altus_iam_endpoint="https://console-def.apps.shared.cloudera.com",
+            env_crn="my_env_crn"
+        )
+
+        cdp_token = token_auth.generate_workload_auth_token("DE")
+        self.assertEqual(cdp_token.token, "my_token")
+        self.assertEqual(cdp_token.expire_at, "2024-07-30T16:00:37.268Z")
+
+        self.assertEqual(make_request_mock.call_count, 1)
+        self.assertEqual(make_request_mock.call_args_list[0],
+                         call("POST",
+                              "https://console-def.apps.shared.cloudera.com/api/v1/iam/generateWorkloadAuthToken",
+                              {"Content-Type": "application/json"},
+                              '{"workloadName": "DE", "environmentCRN": "my_env_crn"}',
+                              TEST_AK,
+                              TEST_PK,
+                              False,
+                              True,
+                              ))
+
+    def test_missing_cde_endpoint_with_private_cloud(self):
+        """Ensures private cloud needs a CDP endpoint URL"""
+        with self.assertRaises(MissingCDPEndpointError):
+            CdpAccessKeyV2TokenAuth(
+                service_id=TEST_SERVICE_ID,
+                cdp_cred=CdpAccessKeyCredentials(TEST_AK, TEST_PK),
+                form_factor=FormFactor.PRIVATE_CLOUD,
+            )
+
+    @patch(
+        'cloudera.cdp.security.cdp_security.make_request',
+        side_effect=[
+            _make_response(200, {"service": {"environmentCrn": "my_env_crn"}}, ""),
+            _make_response(200, {"token": "my_token", "expireAt": "2024-07-30T16:00:37.268Z"}, ""),
+        ],
+    )
+    def test_insecure_mode(self, make_request_mock: Mock):
+        """Insecure mode sets verify=False"""
+        token_auth = CdpAccessKeyV2TokenAuth(
+            service_id=TEST_SERVICE_ID,
+            cdp_cred=CdpAccessKeyCredentials(TEST_AK, TEST_PK),
+            cdp_endpoint="https://console-abc.apps.shared.cloudera.com",
+            insecure=True,
+            custom_ca_path="/tmp/certs"
+        )
+
+        token_auth.generate_workload_auth_token("DE")
+        self.assertEqual(make_request_mock.call_count, 2)
+        self.assertEqual(make_request_mock.call_args_list[0].args[7], False)
+        self.assertEqual(make_request_mock.call_args_list[1].args[7], False)
+
+    @patch(
+        'cloudera.cdp.security.cdp_security.make_request',
+        side_effect=[
+            _make_response(200, {"service": {"environmentCrn": "my_env_crn"}}, ""),
+            _make_response(200, {"token": "my_token", "expireAt": "2024-07-30T16:00:37.268Z"}, ""),
+        ],
+    )
+    def test_custom_ca_path(self, make_request_mock: Mock):
+        """Custom CA Path is set to verify"""
+        token_auth = CdpAccessKeyV2TokenAuth(
+            service_id=TEST_SERVICE_ID,
+            cdp_cred=CdpAccessKeyCredentials(TEST_AK, TEST_PK),
+            cdp_endpoint="https://console-abc.apps.shared.cloudera.com",
+            insecure=False,
+            custom_ca_path="/tmp/certs"
+        )
+
+        token_auth.generate_workload_auth_token("DE")
+        self.assertEqual(make_request_mock.call_count, 2)
+        self.assertEqual(make_request_mock.call_args_list[0].args[7], "/tmp/certs")
+        self.assertEqual(make_request_mock.call_args_list[1].args[7], "/tmp/certs")
+
 
 class CDETestCase(TestCase):
     """Tests for CDE Model related objects"""
