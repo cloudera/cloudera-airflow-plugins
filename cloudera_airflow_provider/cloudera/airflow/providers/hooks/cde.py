@@ -203,6 +203,12 @@ class RateLimitedStop(stop_base):
         return any([stop_after_attempt_res, stop_after_delay_res])
 
 
+def get_error_msg_from_response(response):
+    """Build an error string like '429:Too Many Requests' from the response"""
+    status = str(response.status_code) + ":" + response.reason
+    return (status + ":" + response.text.rstrip()) if response.text else status
+
+
 class CustomStop(stop_base):
     """
     Custom stop class to handle Rate-limited retries (HTTP 429 + Retry-After) in a special way.
@@ -222,12 +228,32 @@ class CustomStop(stop_base):
         self.default_num_retries = default_num_retries
         self.normal_stop = tenacity.stop_after_attempt(self.default_num_retries)
         self.rate_limited_stop = RateLimitedStop(logger, rate_limited_num_retries, retry_time_span)
+        # count expected response code attempts separately
+        self.expected_codes_count = {429: 0}
+        self.total_attempts = 0
 
     def __call__(self, retry_state: tenacity.RetryCallState) -> float:
         if isinstance(retry_state.outcome, tenacity.Future):
+            self.total_attempts += 1
             future_outcome: tenacity.Future = retry_state.outcome
             if not future_outcome.failed and isinstance(future_outcome.result(), requests.Response):
                 response: requests.Response = future_outcome.result()
+                warning_msg = (
+                    f"Attempt {self.total_attempts} finished with {get_error_msg_from_response(response)}"
+                )
+                # count expected response codes separately
+                if response.status_code in self.expected_codes_count:
+                    self.expected_codes_count[response.status_code] += 1
+                    retry_state.attempt_number = self.expected_codes_count[response.status_code]
+                    warning_msg += (
+                        f" (attempts for this response code are counted separately, "
+                        f"current count is {self.expected_codes_count[response.status_code]})"
+                    )
+                else:
+                    # if the response code is not expected, subtract expected code attempts from total
+                    retry_state.attempt_number = self.total_attempts - sum(self.expected_codes_count.values())
+
+                self.log.warning(warning_msg)
                 if response.status_code == 429:
                     return self.rate_limited_stop(retry_state)
         self.log.debug("Using normal Tenacity stop object, number of retries: %s", self.default_num_retries)
@@ -659,10 +685,7 @@ class RetryHandler:
         else:
             if isinstance(future_outcome.result(), requests.Response):
                 response: requests.Response = future_outcome.result()
-                status = str(response.status_code) + ":" + response.reason
-                error_msg = (status + ":" + response.text.rstrip()) if response.text else status
-                if response.status_code >= 400:
-                    self.log.warning("Attempt %d finished with %s", retry_state.attempt_number, error_msg)
+                error_msg = get_error_msg_from_response(response)
                 self._errors.add(error_msg)
                 if response.status_code < 400:
                     return self.EXIT_RETRIES
