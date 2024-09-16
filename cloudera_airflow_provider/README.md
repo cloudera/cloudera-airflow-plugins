@@ -51,9 +51,11 @@ Extra parameters for Cloudera Data Engineering connection for development use on
 | Parameter | Description | Default value |
 | :--- | :---- | :--- |
 | altus_iam_endpoint | Optional | https://iamapi.us-west-1.altus.cloudera.com |
-| ca_cert_path | Optional, custom ca certificates path | None |
+| ca_cert_path | Optional, custom ca certificates path used by CDE authentication | None |
 | cdp_endpoint | CDP service endpoint | https://api.us-west-1.cdp.cloudera.com |
 | insecure | Optional, insecure mode (no certs check) | False |
+| form_factor | Optional, ("public" or "private")| None |
+| ca_cert_path_access_key_auth | Optional, custom ca certificates path used by CDP workload token access generation | None |
 
 You can set up a connection according to the following snippet:
 
