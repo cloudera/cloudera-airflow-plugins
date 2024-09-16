@@ -292,7 +292,7 @@ class Cache:
                         LOG.info("Acquiring new token: No cache found")
                     else:
                         LOG.warning(
-                            "Acquiring new token: Issue while reading the cached token." " Reason %s",
+                            "Acquiring new token: Issue while reading the cached token. Reason %s",
                             repr(err),
                         )
 

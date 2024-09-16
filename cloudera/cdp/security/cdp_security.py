@@ -36,6 +36,8 @@
 """Handles CDP authentication"""
 
 import json
+import enum
+import re
 from abc import ABC, abstractmethod
 from typing import NamedTuple, Optional
 
@@ -56,8 +58,12 @@ class GetCrnError(CdpSecurityError):
     """Exception used when there is an issue while retrieving the environment CRN"""
 
 
-class InferRegionError(Exception):
+class InferRegionError(CdpSecurityError):
     """Exception used when there is an issue while inferring the CDE CP region"""
+
+
+class MissingCDPEndpointError(CdpSecurityError):
+    """Exception used when CDP endpoint is missing and cannot be determined"""
 
 
 class CdpApiAError(CdpSecurityError):
@@ -68,19 +74,39 @@ class GetWorkloadAuthTokenError(CdpSecurityError):
     """Exception used when there is an issue while retrieving the workload token"""
 
 
+class FormFactor(str, enum.Enum):
+    """FormFactor enum private or public"""
+
+    PRIVATE_CLOUD = 'private'
+    PUBLIC_CLOUD = 'public'
+
+
+def get_form_factor(endpoint_url: str) -> FormFactor:
+    """
+    # Determines the form factor based on the CDP endpoint URL
+
+    :param endpoint_url: str The CDP endpoint URL to use to determine the form factor.
+    """
+
+    if re.match('(.+(altus|cdp|dev|int|stage).(cloudera|clouderagovt).com)', endpoint_url):
+        return FormFactor.PUBLIC_CLOUD
+    else:
+        return FormFactor.PRIVATE_CLOUD
+
+
 class CdpTokenAuthResponse(TokenResponse):
     """CDP Token Response object"""
 
     def __init__(self, response: requests.Response):
         response_dict = json.loads(response.content)
         self.token = response_dict.get("token")
-        self.expires_at = response_dict.get("expiresAt")
+        self.expire_at = response_dict.get("expireAt")
 
     def is_valid(self) -> bool:
         raise NotImplementedError
 
     def __repr__(self) -> str:
-        return f"{CdpTokenAuthResponse.__name__}" f"{{Token: {self.token}, Expires At: {self.expires_at}}}"
+        return f"{CdpTokenAuthResponse.__name__}" f"{{Token: {self.token}, Expire At: {self.expire_at}}}"
 
 
 class CdpAuth(ABC):
@@ -131,6 +157,7 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
     """Authentication class for obtaining CDP token from access key/private key credentials"""
 
     CDP_DESCRIBE_SERVICE_ROUTE = "/api/v1/de/describeService"
+    GENERATE_WORKLOAD_AUTH_TOKEN_ROUTE = "/api/v1/iam/generateWorkloadAuthToken"
     CDP_DEFAULT_ENDPOINTS = {
         "us-west-1": "https://api.us-west-1.cdp.cloudera.com",
         "eu-1": "https://api.eu-1.cdp.cloudera.com",
@@ -143,8 +170,8 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
     }
     ALTUS_IAM_GEN_WORKLOAD_AUTH_TOKEN_ROUTES = {
         "us-west-1": "/iam/generateWorkloadAuthToken",
-        "eu-1": "/api/v1/iam/generateWorkloadAuthToken",
-        "ap-1": "/api/v1/iam/generateWorkloadAuthToken"
+        "eu-1": GENERATE_WORKLOAD_AUTH_TOKEN_ROUTE,
+        "ap-1": GENERATE_WORKLOAD_AUTH_TOKEN_ROUTE,
     }
 
     def __init__(
@@ -154,6 +181,10 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
         region: Optional[str] = None,
         cdp_endpoint: Optional[str] = None,
         altus_iam_endpoint: Optional[str] = None,
+        insecure: Optional[bool] = False,
+        custom_ca_path: Optional[str] = None,
+        form_factor: Optional[FormFactor] = None,
+        env_crn: Optional[str] = None,
     ) -> None:
         self.service_id = service_id
         self.cdp_cred = cdp_cred
@@ -161,24 +192,52 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
         self.cdp_describe_service_endpoint = cdp_endpoint
         self.altus_iam_gen_workload_auth_endpoint = altus_iam_endpoint
 
+        # FormFactor
+        self.form_factor = form_factor
+        if self.form_factor is None:
+            if cdp_endpoint is not None:
+                self.form_factor = get_form_factor(cdp_endpoint)
+            else:
+                self.form_factor = FormFactor.PUBLIC_CLOUD
+
+        if self.form_factor == FormFactor.PRIVATE_CLOUD and not self.cdp_describe_service_endpoint:
+            raise MissingCDPEndpointError()
+
+        # SSL Verification
+        self.verify = True
+        if insecure:
+            self.verify = False
+        elif custom_ca_path is not None:
+            self.verify = custom_ca_path
+
+        # Environment CRN
+        self.env_crn = env_crn
+
     def generate_workload_auth_token(self, workload_name: str) -> CdpTokenAuthResponse:
         LOG.debug("Authenticating with access key: %s", self.cdp_cred.access_key)
         LOG.debug("Using Cluster ID: %s", self.service_id)
 
         # Infer the region
-        if not self.region:
+        if not self.region and self.form_factor == FormFactor.PUBLIC_CLOUD:
             self.region = self._infer_region()
 
         # Configure endpoints
-        if not self.cdp_describe_service_endpoint:
-            self.cdp_describe_service_endpoint = self.CDP_DEFAULT_ENDPOINTS[self.region]
-        self.cdp_describe_service_endpoint += self.CDP_DESCRIBE_SERVICE_ROUTE
-        if not self.altus_iam_gen_workload_auth_endpoint:
-            self.altus_iam_gen_workload_auth_endpoint = self.ALTUS_IAM_DEFAULT_ENDPOINTS[self.region]
-        self.altus_iam_gen_workload_auth_endpoint += self.ALTUS_IAM_GEN_WORKLOAD_AUTH_TOKEN_ROUTES[self.region]
+        if self.form_factor == FormFactor.PUBLIC_CLOUD:
+            if not self.cdp_describe_service_endpoint:
+                self.cdp_describe_service_endpoint = self.CDP_DEFAULT_ENDPOINTS[self.region]
+            self.cdp_describe_service_endpoint += self.CDP_DESCRIBE_SERVICE_ROUTE
+            if not self.altus_iam_gen_workload_auth_endpoint:
+                self.altus_iam_gen_workload_auth_endpoint = self.ALTUS_IAM_DEFAULT_ENDPOINTS[self.region]
+            self.altus_iam_gen_workload_auth_endpoint \
+                += self.ALTUS_IAM_GEN_WORKLOAD_AUTH_TOKEN_ROUTES[self.region]
+        else:
+            if not self.altus_iam_gen_workload_auth_endpoint:
+                self.altus_iam_gen_workload_auth_endpoint = self.cdp_describe_service_endpoint
+            self.cdp_describe_service_endpoint += self.CDP_DESCRIBE_SERVICE_ROUTE
+            self.altus_iam_gen_workload_auth_endpoint += self.GENERATE_WORKLOAD_AUTH_TOKEN_ROUTE
 
         # Get the environment-crn
-        env_crn = self.get_env_crn()
+        env_crn = self.env_crn or self.get_env_crn()
         LOG.debug("Using environment-crn %s", env_crn)
 
         # Exchange the access key for a CDP access token
@@ -225,7 +284,7 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
                 self.cdp_cred.access_key,
                 self.cdp_cred.private_key,
                 False,
-                True,
+                self.verify,
             )
         except Exception as err:
             LOG.error("Could not exchange cdp token with access key %s", repr(err))
@@ -246,7 +305,7 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
             self.cdp_cred.access_key,
             self.cdp_cred.private_key,
             False,
-            True,
+            self.verify,
         )
         return response
 
@@ -264,11 +323,11 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
                     LOG.debug("Cluster with ID %s doesn't present in region %s. Error: %s",
                               self.service_id, region, err)
                     continue
-                else:
-                    msg = f"Issue while performing request to infer region for Cluster with ID " \
-                          f"{self.service_id} in region {region}. Error: {repr(err)}"
-                    LOG.warning(msg)
-                    errors.append(repr(err))
+
+                msg = f"Issue while performing request to infer region for Cluster with ID " \
+                      f"{self.service_id} in region {region}. Error: {repr(err)}"
+                LOG.warning(msg)
+                errors.append(repr(err))
 
         if len(regions) > 1:
             # Generally, this should not happen, however, there is no guarantee for access key, private key
@@ -283,7 +342,7 @@ class CdpAccessKeyV2TokenAuth(CdpAuth):
                 msg += "Please make sure that CDP access and private keys are correct. "
             else:
                 msg += f"Errors: {errors}. "
-            msg += f"Consider specifying the correct region via 'region' connection extra parameter (e.g. " \
-                   f"{{\"region\": \"eu-1\"}}). Supported regions are 'us-west-1', 'eu-1', and 'ap-1'"
+            msg += "Consider specifying the correct region via 'region' connection extra parameter (e.g. " \
+                   "{{\"region\": \"eu-1\"}}). Supported regions are 'us-west-1', 'eu-1', and 'ap-1'"
             raise InferRegionError(msg)
         return regions[0]
