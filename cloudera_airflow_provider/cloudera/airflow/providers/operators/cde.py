@@ -149,6 +149,7 @@ class CdeRunJobOperator(BaseOperator):
     DEFAULT_TIMEOUT = 0
     DEFAULT_CONNECTION_ID = "cde_runtime_api"
 
+    # NOTE: keep the decorators/cde.py up to date with the CdeRunJobOperator's parameters
     def __init__(  # pylint: disable=too-many-arguments
         self,
         job_name: str,

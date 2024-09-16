@@ -134,7 +134,7 @@ So essentially it is up to the server to control the waiting time of the client.
 If the Retry-After header is not found or cannot be parsed, the default retry interval of 4 seconds will be used.
 
 
-Example CDE operator DAG snippet:
+`CdeRunJobOperator` DAG snippet:
 ```python
 cde_task = CdeRunJobOperator(
     connection_id='my_vc_name',
@@ -144,6 +144,14 @@ cde_task = CdeRunJobOperator(
 )
 ```
 Please refer for complete [example DAG](../docs/examples/cde_operator_example.py).
+
+`@task.cde` DAG snippet:
+```python
+@task.cde
+def run_scala_pi() -> Union[None, str, Dict[str, Any]]:
+    return "example-scala-pi"
+```
+Please refer for complete [example DAG](../docs/examples/cde_taskflow_example.py).
 
 #### CdwExecuteQueryOperator
 
