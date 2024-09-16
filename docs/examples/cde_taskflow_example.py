@@ -33,40 +33,67 @@
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
 
-"""Helper function for the package installation"""
+from airflow.decorators import dag, task
+from pendulum import datetime
+from typing import Any, Dict, Tuple, Union
+
+default_args = {
+    'owner': 'airflow',
+}
+
+@dag(
+    start_date=datetime(2024, 1, 1),
+    catchup=False,
+    default_args=default_args,
+    schedule=None,
+    description="TaskFlow CDERunJobOperator examples"
+)
+def cde_taskflow_example():
+    @task.cde(connection_id="default-vc", job_name="example-scala-pi")
+    def run_scala_pi() -> Union[None, str, Dict[str, Any]]:
+        """
+        Runs a CDE Job with the given name, decorator's argument.
+
+        :return: None
+        """
+        return None
+
+    @task.cde(connection_id="default-vc")
+    def run_scala_pi_job_name() -> Union[None, str, Dict[str, Any]]:
+        """
+        Runs a CDE job with the given name, return value.
+        The CDERunJobOperator parameters can be passed in the decorator's arguments.
+
+        :return: the job_name
+        """
+        return "example-scala-pi"
+
+    @task
+    def get_number_of_executors():
+        return 4
+
+    @task.cde(
+        connection_id="default-vc",
+    )
+    def run_scala_pi_parameters(num_executors: int) -> Union[None, str, Dict[str, Any]]:
+        """
+        Runs a CDE job with the given name and overrides.
+        The CDERunJobOperator parameters can be passed in the decorator's arguments,
+        the parameters returned in the dict takes precedence over the decorator's arguments.
+
+        :param num_executors: number of executors parameter
+        :return: the job_name and the overrides
+        """
+        return {
+            "job_name": "example-scala-pi",
+            "overrides": {
+                "spark": {
+                    "numExecutors": num_executors
+                }
+            }
+        }
+
+    [run_scala_pi(), run_scala_pi_job_name(), run_scala_pi_parameters(get_number_of_executors())]
 
 
-def get_provider_info():  # pragma: no cover , metadata only used for building
-    """Provides required metadata for the entrypoint in the setup.cfg"""
-    return {
-        "package-name": "cloudera-airflow-provider",
-        "name": ("Cloudera Airflow Provider"),
-        "description": """Provides Operators for running jobs on CDE and CDW.
-Notes:
-    - For Airflow 2.x a new dedicated connection type for CDE is available in the UI""",
-        # hook-class-names is deprecated as of Airflow 2.2.0,
-        # keeping it for backwards compatibility with older versions
-        # https://airflow.apache.org/docs/apache-airflow-providers/index.html#how-to-create-your-own-provider
-        "hook-class-names": [
-            "cloudera.airflow.providers.hooks.cde.CdeHook",
-        ],
-        "connection-types": [
-            {
-                "hook-class-name": "cloudera.airflow.providers.hooks.cde.CdeHook",
-                "connection-type": "cloudera_data_engineering",
-            }
-        ],
-        "task-decorators": [
-            {
-                "name": "cde",
-                "class-name": "cloudera.airflow.providers.decorators.cde.cde_task",
-            }
-        ],
-        "versions": [
-            "2.0.0",
-            "1.1.0",
-            "1.0.2",
-            "1.0.1",
-            "1.0.0",
-        ],
-    }
+cde_taskflow_example()
