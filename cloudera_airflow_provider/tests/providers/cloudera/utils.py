@@ -42,8 +42,10 @@ from json import dumps
 from typing import Any, Iterable, List, Tuple
 
 from requests import Response
+
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.DEBUG)
+
 
 def iter_len_plus_one(iterator: Iterable) -> int:
     """Return the length + 1 of the given iterator.
@@ -62,7 +64,7 @@ def _get_call_arguments(self: tuple) -> dict[str, Any]:
     return kwargs
 
 
-def _make_response(status: int, body, reason: str, headers: List[Tuple[str, str]] = None) -> Response:
+def _make_response(status: int, body, reason: str, headers: list[tuple[str, str]] = None) -> Response:
     content = (
         b""
         if body == b""
