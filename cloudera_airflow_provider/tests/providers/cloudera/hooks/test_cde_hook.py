@@ -442,7 +442,9 @@ class CdeHookTest(unittest.TestCase):
             wait_fixed_cls_mock = wait_mocks[0]
             wait_exp_obj_mock = wait_mocks[1]
 
-            cde_hook = CdeHook()
+            # 429 errors should not be taken into account by num_retries
+            cde_hook = CdeHook(num_retries=4)
+
             run_id = cde_hook.submit_job(TEST_JOB_NAME)
             self.assertEqual(run_id, TEST_JOB_RUN_ID)
             self.assertEqual(cde_mock.call_count, 1)
@@ -467,6 +469,75 @@ class CdeHookTest(unittest.TestCase):
 
             calls = self._filter_calls(wait_exp_obj_mock, include={""}, skip={"__str__"})
             self.assertEqual(len(calls), 2)
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[
+            _make_response(500, None, "Internal Server Error"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(501, None, "Some other Server Error"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(502, None, "Some other Server Error 2"),
+        ],
+    )
+    def test_submit_job_retry_fails_different_response_codes(self, send_mock, connection_mock, cde_mock):
+        """Ensure that 429 errors attempts are counted separately.
+        Test expectations (num_retries=3):
+        500+ and 429 response codes one by one, until the num_retries is reached
+        """
+
+        with self.tenacity_wait_mocks():
+            # 429 errors should not be taken into account by num_retries
+            cde_hook = CdeHook(num_retries=3)
+
+            with self.assertRaises(CdeHookException):
+                cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(cde_mock.call_count, 1)
+            self.assertEqual(send_mock.call_count, 5)
+            connection_mock.assert_called()
+
+    @mock.patch.object(
+        CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
+    )
+    @mock.patch.object(BaseHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
+    @mock.patch.object(
+        Session,
+        "send",
+        side_effect=[
+            _make_response(500, None, "Internal Server Error"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(501, None, "Some other Server Error"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(502, None, "Some other Server Error 2"),
+            _make_response(429, None, "Too Many Requests"),
+            _make_response(201, {"id": TEST_JOB_RUN_ID}, ""),
+        ],
+    )
+    def test_submit_job_retry_succeeds_different_response_codes(self, send_mock, connection_mock, cde_mock):
+        """Ensure that 429 errors attempts are counted separately.
+        Test expectations (num_retries=4):
+        500+ and 429 response codes one by one, until the call succeeds
+        """
+
+        with self.tenacity_wait_mocks() as wait_mocks:
+            wait_exp_obj_mock = wait_mocks[1]
+            # 429 errors should not be taken into account by num_retries
+            cde_hook = CdeHook(num_retries=4)
+
+            run_id = cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(run_id, TEST_JOB_RUN_ID)
+            self.assertEqual(cde_mock.call_count, 1)
+            self.assertEqual(send_mock.call_count, 7)
+            connection_mock.assert_called()
+
+            LOG.debug("wait_exp_obj_mock.mock_calls: %s", wait_exp_obj_mock.mock_calls)
+            calls = self._filter_calls(wait_exp_obj_mock, include={""}, skip={"__str__"})
+            self.assertEqual(len(calls), 3)
 
     @mock.patch.object(
         CdeApiTokenAuth, "get_cde_authentication_token", return_value=VALID_CDE_TOKEN_AUTH_RESPONSE
@@ -977,12 +1048,13 @@ class CdeHookTest(unittest.TestCase):
         AIRFLOW__CDE_DEFAULT_NUM_RETRIES environment variable.
         The call will succeed for the 9th call which is the CdeHook.DEFAULT_NUM_RETRIES value.
         """
-        cde_hook = CdeHook()
-        run_id = cde_hook.submit_job(TEST_JOB_NAME)
-        self.assertEqual(run_id, TEST_JOB_RUN_ID)
-        cde_mock.assert_called()
-        connection_mock.assert_called()
-        self.assertEqual(session_send_mock.call_count, CdeHook.DEFAULT_NUM_RETRIES)
+        with self.tenacity_wait_mocks():
+            cde_hook = CdeHook()
+            run_id = cde_hook.submit_job(TEST_JOB_NAME)
+            self.assertEqual(run_id, TEST_JOB_RUN_ID)
+            cde_mock.assert_called()
+            connection_mock.assert_called()
+            self.assertEqual(session_send_mock.call_count, CdeHook.DEFAULT_NUM_RETRIES)
 
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", side_effect=ConnectionError())
