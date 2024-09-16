@@ -53,6 +53,8 @@ from cloudera.cdp.security import SecurityError
 from cloudera.cdp.security.cde_security import BearerAuth, CdeApiTokenAuth, CdeTokenAuthResponse
 from cloudera.cdp.security.cdp_security import CdpAccessKeyCredentials, CdpAccessKeyV2TokenAuth
 from cloudera.cdp.security.token_cache import EncryptedFileTokenCacheStrategy
+from tenacity.stop import stop_base
+from tenacity.wait import wait_base
 
 from airflow.configuration import conf
 from airflow.exceptions import AirflowConfigException, AirflowException  # type: ignore
@@ -60,8 +62,6 @@ from airflow.hooks.base import BaseHook  # type: ignore
 from airflow.providers.http.hooks.http import HttpHook  # type: ignore
 from cloudera.airflow.providers.hooks import CdpHookException
 from cloudera.airflow.providers.model.connection import CdeConnection
-from tenacity.stop import stop_base
-from tenacity.wait import wait_base
 
 DEFAULT_RETRY_INTERVAL = 4
 RETRY_AFTER_HEADER = "Retry-After"
@@ -80,11 +80,11 @@ class CustomWait(wait_base):
 
     def __init__(self, logger) -> None:
         self.log = logger
-        self.wait_fixed_cls: Type[tenacity.wait_base] = tenacity.wait_fixed
-        self.wait_exponential_obj: Type[tenacity.wait_base] = tenacity.wait_exponential()
+        self.wait_fixed_cls: type[tenacity.wait_base] = tenacity.wait_fixed
+        self.wait_exponential_obj: type[tenacity.wait_base] = tenacity.wait_exponential()
         self.start_of_retries_logged = False
 
-    def __call__(self, retry_state: "RetryCallState") -> float:
+    def __call__(self, retry_state: RetryCallState) -> float:
         if isinstance(retry_state.outcome, tenacity.Future):
             future_outcome: tenacity.Future = retry_state.outcome
             if not future_outcome.failed and isinstance(future_outcome.result(), requests.Response):
@@ -95,20 +95,25 @@ class CustomWait(wait_base):
                     return self._wait_fixed(retry_state, retry_after)
         return self._wait_exponential(retry_state)
 
-    def _wait_exponential(self, retry_state: "RetryCallState"):
+    def _wait_exponential(self, retry_state: RetryCallState):
         self.log.debug("Waiting exponentially between requests")
         return self.wait_exponential_obj(retry_state=retry_state)
 
-    def _wait_fixed(self, retry_state: "RetryCallState", retry_after: int):
+    def _wait_fixed(self, retry_state: RetryCallState, retry_after: int):
         if not self.start_of_retries_logged:
-            self.log.info("The server is overloaded and this request has been rejected due to server-side throttling. "
-                          "The request will be retried regularly until it gets accepted or typically fails after 2 hours of retry.")
+            self.log.info(
+                "The server is overloaded and this request has been rejected due to server-side throttling. "
+                "The request will be retried regularly until it gets accepted or typically fails after 2 hours of retry."
+            )
             self.start_of_retries_logged = True
 
         # Since the value of retry after second can change from response to response,
         # we need to instantiate tenacity.wait_fixed class here to have the correct value on each retry
-        self.log.debug("The server is overloaded and this request has been rejected due to server-side throttling (HTTP 429). "
-                       "Waiting fixed interval of %d seconds between requests", retry_after)
+        self.log.debug(
+            "The server is overloaded and this request has been rejected due to server-side throttling (HTTP 429). "
+            "Waiting fixed interval of %d seconds between requests",
+            retry_after,
+        )
         return self.wait_fixed_cls(retry_after)(retry_state=retry_state)
 
     def _get_retry_after_value(self, response: requests.Response) -> int:
@@ -118,7 +123,8 @@ class CustomWait(wait_base):
             self.log.warning(
                 "Cannot find '%s' header in response, using default wait interval of %d seconds",
                 RETRY_AFTER_HEADER,
-                DEFAULT_RETRY_INTERVAL)
+                DEFAULT_RETRY_INTERVAL,
+            )
             return DEFAULT_RETRY_INTERVAL
 
     def _parse_retry_after_as_int(self, response: requests.Response, default_value: int) -> int:
@@ -127,10 +133,13 @@ class CustomWait(wait_base):
             int_value = int(header_value)
             return int_value
         except ValueError:
-            self.log.warning("Failed to parse '%s' as int, value of header was: %s. "
-                             "Using default wait interval of %d seconds",
-                             RETRY_AFTER_HEADER, header_value,
-                             DEFAULT_RETRY_INTERVAL)
+            self.log.warning(
+                "Failed to parse '%s' as int, value of header was: %s. "
+                "Using default wait interval of %d seconds",
+                RETRY_AFTER_HEADER,
+                header_value,
+                DEFAULT_RETRY_INTERVAL,
+            )
             return default_value
 
 
@@ -141,40 +150,51 @@ class RateLimitedStop(stop_base):
     def _to_seconds(time_unit: time_unit_type) -> float:
         return float(time_unit.total_seconds() if isinstance(time_unit, timedelta) else time_unit)
 
-    def __init__(self, logger,
-                 num_retries: int,
-                 time_unit: time_unit_type) -> None:
+    def __init__(self, logger, num_retries: int, time_unit: time_unit_type) -> None:
         self.log = logger
         self.num_retries = num_retries
         self.max_seconds_of_retries = self._to_seconds(time_unit)
-        self.stop_after_attempt: Type[tenacity.stop_base] = tenacity.stop_after_attempt(num_retries)
-        self.stop_after_delay: Type[tenacity.stop_base] = tenacity.stop_after_delay(self.max_seconds_of_retries)
+        self.stop_after_attempt: type[tenacity.stop_base] = tenacity.stop_after_attempt(num_retries)
+        self.stop_after_delay: type[tenacity.stop_base] = tenacity.stop_after_delay(
+            self.max_seconds_of_retries
+        )
         self.log_start = datetime.datetime.now()
 
-    def __call__(self, retry_state: "RetryCallState") -> float:
+    def __call__(self, retry_state: RetryCallState) -> float:
         seconds_since_start = retry_state.seconds_since_start
         seconds_left = self.max_seconds_of_retries - seconds_since_start
 
-        self.log.debug("Request throttling (Rate limiting) retry progress: "
-                       "Number of retries: %s, "
-                       "Maximum time span of retries (in seconds): %d, "
-                       "Seconds left: %s", self.num_retries, self.max_seconds_of_retries, seconds_left)
+        self.log.debug(
+            "Request throttling (Rate limiting) retry progress: "
+            "Number of retries: %s, "
+            "Maximum time span of retries (in seconds): %d, "
+            "Seconds left: %s",
+            self.num_retries,
+            self.max_seconds_of_retries,
+            seconds_left,
+        )
 
         stop_after_attempt_res = self.stop_after_attempt(retry_state)
         stop_after_delay_res = self.stop_after_delay(retry_state)
 
         if stop_after_attempt_res:
-            self.log.info("Stopping Rate-Limited retries as maximum number of retries exceeded. "
-                          "Please note that the server might still be overloaded.")
+            self.log.info(
+                "Stopping Rate-Limited retries as maximum number of retries exceeded. "
+                "Please note that the server might still be overloaded."
+            )
         if stop_after_delay_res:
-            self.log.info("Stopping Rate-limited retries as maximum time span exceeded. "
-                          "Please note that the server might still be overloaded.")
+            self.log.info(
+                "Stopping Rate-limited retries as maximum time span exceeded. "
+                "Please note that the server might still be overloaded."
+            )
         else:
             now = datetime.datetime.now()
             seconds_elapsed = (now - self.log_start).total_seconds()
             if seconds_elapsed >= RateLimitedStop.TEN_MINUTES:
-                self.log.info("Still retrying, as the server is overloaded. "
-                              "Please note that this message is printed every 10 minutes to indicate progress.")
+                self.log.info(
+                    "Still retrying, as the server is overloaded. "
+                    "Please note that this message is printed every 10 minutes to indicate progress."
+                )
                 self.log_start = now
         return any([stop_after_attempt_res, stop_after_delay_res])
 
@@ -187,16 +207,15 @@ class CustomStop(stop_base):
     Otherwise, with the normal wait, we stop after default_num_retries.
     """
 
-    def __init__(self, logger,
-                 default_num_retries: int,
-                 rate_limited_num_retries: int,
-                 retry_time_span: time_unit_type) -> None:
+    def __init__(
+        self, logger, default_num_retries: int, rate_limited_num_retries: int, retry_time_span: time_unit_type
+    ) -> None:
         self.log = logger
         self.default_num_retries = default_num_retries
         self.normal_stop = tenacity.stop_after_attempt(self.default_num_retries)
         self.rate_limited_stop = RateLimitedStop(logger, rate_limited_num_retries, retry_time_span)
 
-    def __call__(self, retry_state: "RetryCallState") -> float:
+    def __call__(self, retry_state: RetryCallState) -> float:
         if isinstance(retry_state.outcome, tenacity.Future):
             future_outcome: tenacity.Future = retry_state.outcome
             if not future_outcome.failed and isinstance(future_outcome.result(), requests.Response):
@@ -214,7 +233,7 @@ class CdeHookException(CdpHookException):
 class CdeHook(BaseHook):  # type: ignore
     """A wrapper around the CDE Virtual Cluster REST API."""
 
-    conn_name_attr = "cde_conn_id"
+    conn_name_attr = "connection_id"
     conn_type = "cloudera_data_engineering"
     hook_name = "Cloudera Data Engineering"
 
@@ -241,7 +260,7 @@ class CdeHook(BaseHook):  # type: ignore
         self,
         connection_id: str = DEFAULT_CONN_ID,
         num_retries: int | None = None,
-        api_timeout: int | None = None
+        api_timeout: int | None = None,
     ) -> None:
         """
         Create a new CdeHook. The connection parameters are eagerly validated to highlight
@@ -284,8 +303,7 @@ class CdeHook(BaseHook):  # type: ignore
                 )
             except AirflowConfigException as acerr:
                 self.log.warning(acerr)
-                self.log.warning("Falling back to default num retries value: %s",
-                                 CdeHook.DEFAULT_NUM_RETRIES)
+                self.log.warning("Falling back to default num retries value: %s", CdeHook.DEFAULT_NUM_RETRIES)
 
         self.num_retries = num_retries_val
 
@@ -299,17 +317,12 @@ class CdeHook(BaseHook):  # type: ignore
                 )
             except AirflowConfigException as acerr:
                 self.log.warning(acerr)
-                self.log.warning("Falling back to default api timeout value: %s",
-                                 CdeHook.DEFAULT_API_TIMEOUT)
+                self.log.warning("Falling back to default api timeout value: %s", CdeHook.DEFAULT_API_TIMEOUT)
 
         self.api_timeout = api_timeout_val
 
     def _do_api_call(
-        self,
-        method: str,
-        endpoint: str,
-        timeout: int,
-        params: dict[str, Any] | None = None
+        self, method: str, endpoint: str, timeout: int, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         """
         Execute the API call. Requests are retried for connection errors and server-side errors
@@ -376,10 +389,12 @@ class CdeHook(BaseHook):  # type: ignore
             common_kwargs: dict[str, Any] = dict(
                 _retry_args=dict(
                     wait=CustomWait(self.log),
-                    stop=CustomStop(self.log,
-                                    self.num_retries,
-                                    CdeHook.DEFAULT_NUM_RETRIES_RATE_LIMITED,
-                                    CdeHook.RETRY_TIME_SPAN_FOR_RATE_LIMIT),
+                    stop=CustomStop(
+                        self.log,
+                        self.num_retries,
+                        CdeHook.DEFAULT_NUM_RETRIES_RATE_LIMITED,
+                        CdeHook.RETRY_TIME_SPAN_FOR_RATE_LIMIT,
+                    ),
                     retry=retry_handler,
                 ),
                 endpoint=endpoint,
@@ -473,6 +488,31 @@ class CdeHook(BaseHook):  # type: ignore
 
         return cde_token
 
+    def test_connection(self) -> tuple[bool, str]:
+        """
+        Test the connection to the CDE API by calling the /info endpoint
+        """
+        vcluster_endpoint = self.connection.get_vcluster_jobs_api_url()
+        try:
+            response = self._do_api_call("GET", f"/info", self.api_timeout)
+            if response is None:
+                status = False
+                msg = f"Unexpected 'None' response while connecting to '{vcluster_endpoint}'."
+            elif "appName" not in response:
+                status = False
+                msg = (
+                    f"Invalid response when testing the connection to '{vcluster_endpoint}', "
+                    f"it does not contain the field 'appName'."
+                )
+            else:
+                status = True
+                msg = f"Connecting to Virtual Cluster '{response.get('appName')}' was successful."
+        except Exception as err:
+            status = False
+            msg = f"Testing the connection to '{self.connection.get_vcluster_jobs_api_url()}' failed, error: {err}"
+
+        return status, msg
+
     def submit_job(
         self,
         job_name: str,
@@ -533,7 +573,11 @@ class CdeHook(BaseHook):  # type: ignore
         :rtype: str
         """
         default_status_check_timeout = CdeHook.DEFAULT_API_TIMEOUT // 10
-        timeout = self.api_timeout // 10 if self.api_timeout // 10 >= default_status_check_timeout else default_status_check_timeout
+        timeout = (
+            self.api_timeout // 10
+            if self.api_timeout // 10 >= default_status_check_timeout
+            else default_status_check_timeout
+        )
 
         response = self._do_api_call("GET", f"/job-runs/{run_id}", timeout)
         if response is None:
