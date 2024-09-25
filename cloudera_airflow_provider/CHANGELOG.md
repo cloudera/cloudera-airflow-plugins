@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.4] - 2024-09-25
+- Deprecate CdwExecuteQueryOperator use airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator instead
+
 ## [2.1.3] - 2024-09-16
 - CDERunJobOperator 429 response code attempts are now counted separately during retries
 - TaskFlow decorator implementation for CDERunJobOperator
