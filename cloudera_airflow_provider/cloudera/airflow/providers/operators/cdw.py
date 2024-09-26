@@ -36,10 +36,18 @@
 from __future__ import annotations
 
 import re
+import warnings
 
 from airflow.models import BaseOperator
 from airflow.utils.operator_helpers import context_to_airflow_vars
 from cloudera.airflow.providers.hooks.cdw import CdwHook
+
+warnings.warn(
+    "This module is deprecated. Please use `airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator`"
+    " with `Impala` Airflow Connections type.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class CdwExecuteQueryOperator(BaseOperator):
