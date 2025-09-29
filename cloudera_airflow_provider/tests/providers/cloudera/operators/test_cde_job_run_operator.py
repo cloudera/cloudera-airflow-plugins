@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
 from datetime import datetime
 from unittest import mock
@@ -49,7 +50,7 @@ from airflow.models.connection import Connection
 from airflow.models.dag import DAG
 from airflow.models.taskinstance import TaskInstance
 from cloudera.airflow.providers.hooks.cde import CdeHook
-from cloudera.airflow.providers.operators.cde import FORMAT_DATE_TIME, CdeRunJobOperator
+from cloudera.airflow.providers.operators.cde import CdeRunJobOperator
 
 TEST_JOB_NAME = "testjob"
 TEST_JOB_RUN_ID = 10
@@ -71,10 +72,9 @@ TEST_CONTEXT = {
     "run_id": TEST_AIRFLOW_RUN_ID,
 }
 # for airflow < 2.2.0 there's no run_id, so we use execution_date instead
-VALID_REQUEST_IDS = [
-    f"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_ID}#{TEST_AIRFLOW_TASK_ID}#1",
-    f"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_EXECUTION_DATE.strftime(FORMAT_DATE_TIME)}"
-    + f"#{TEST_AIRFLOW_TASK_ID}#1",
+VALID_REQUEST_ID_PATTERNS = [
+    re.compile(rf"{TEST_AIRFLOW_DAG_ID}#\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}#{TEST_AIRFLOW_TASK_ID}#\d+#\d+"),
+    re.compile(rf"{TEST_AIRFLOW_DAG_ID}#{TEST_AIRFLOW_RUN_ID}#{TEST_AIRFLOW_TASK_ID}#\d+#\d+"),
 ]
 TEST_HOST = "vc1.cde-2.cdp-3.cloudera.site"
 TEST_SCHEME = "http"
@@ -196,7 +196,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         self.assertEqual(cde_operator.get_hook().num_retries, TEST_API_RETRIES)
         self.assertEqual(cde_operator.get_hook().api_timeout, TEST_API_TIMEOUT)
 
-    # pylint: disable=unused-argument
+    # pylint: disable=unused-argument, too-many-positional-arguments
     @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
     @mock.patch.object(CdeHook, "kill_job_run")
     @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
@@ -398,14 +398,11 @@ class CdeRunJobOperatorTest(unittest.TestCase):
 
     def validate_request_id(self, request_id):
         """Validate the request ID"""
-        timestamp = request_id.split("#")[-1]
-        for valid_request_id in VALID_REQUEST_IDS:
-            if f'{valid_request_id}#{timestamp}' == request_id:
+        for pattern in VALID_REQUEST_ID_PATTERNS:
+            if pattern.fullmatch(request_id):
                 return
-        self.fail(
-            f"Request ID '{request_id}' doesn't match valid patterns: {VALID_REQUEST_IDS}"
-            f" and parsed timestamp {timestamp}"
-        )
+
+        self.fail(f"Request ID '{request_id}' doesn't match valid patterns: {VALID_REQUEST_ID_PATTERNS}")
 
     def validate_context_variables(self, variables):
         """Validate the context variables"""

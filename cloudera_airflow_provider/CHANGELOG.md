@@ -4,12 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [2.2.0] - 2025-09-29
+- The run-id is logged from the CDERunJobOperator at each poll interval
+- Removed: CDWOperator, CDWHook, CDWSensor
+- Removed: legacy import paths. Only modules under cloudera.airflow.providers should be used
 
 ## [2.1.4] - 2024-09-25
 - Deprecate CdwExecuteQueryOperator use airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator instead
 
-## [2.1.3] - 2024-09-16
+## [2.1.3] - 2024-09-13
 - CDERunJobOperator 429 response code attempts are now counted separately during retries
 - TaskFlow decorator implementation for CDERunJobOperator
 - CdpAccessKeyV2TokenAuth is now usable with Private Cloud CDE deployments

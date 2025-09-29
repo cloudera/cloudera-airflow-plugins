@@ -7,7 +7,6 @@ Cloudera provider for data orchestration with Apache Airflow.
 Use Cloudera Airflow provider with [Cloudera Data Engineering](https://docs.cloudera.com/data-engineering/cloud/index.html) and [Cloudera Data Warehouse](https://docs.cloudera.com/data-warehouse/cloud/index.html) services to get convenience of [Apache Airflow](https://github.com/apache/airflow) in your data orchestration and scheduling.
 Cloudera Airflow provider comes with the following features:
 - CdeRunJobOperator: launches a CDE job
-- CdwExecuteQueryOperator: executes a SQL query on CDW
 
 Python package: [cloudera-airflow-provider](https://pypi.org/project/cloudera-airflow-provider/)
 
@@ -69,33 +68,6 @@ airflow connections add '{your connection id}' \
     --conn-extra '{"region": "us-west-1"}'
 ```
 
-#### Hive CLI connection to Cloudera Data Warehouse
-
-Connection contain parameters:
-
-| Parameter | Description | Value |
-| :--- | :---- | :--- |
-| ID | Id of the Airflow connection of the target CDW Virtual Warehouse | Simple string making the Virtual Warehouse identifiable |
-| Type | Airflow connection type | 'hive_cli'. Note: in Airflow UI it is available as "Hive Client Wrapper" |
-| Host | URL of related CDW connection | On CDW Virtual Warehouse UI: click 'More' > 'Copy JDBC connection link' |
-| Schema | Hive schema | 'default' or your preferred |
-| Login | Your workload user in CDP profile | Customer credentials |
-| Password | Workload password | Customer credentials |
-
-##### How to obtain host parameter for Hive CLI connection
-![Cloudera logo](../docs/images/CDW_JDBC_connection.png)
-This link contain URL needed to set up Hive CLI connection on Airflow.
-
-You can refer snippet to set such connection via the CLI:
-
-```shell script
-airflow connections add '{your connection id}' \
-  --conn-type 'hive_cli' \
-  --conn-host '{your_url_from_JDBC_connection_on_virtual_warehouse}' \
-  --conn-schema 'default' \
-  --conn-login "{your_workload_user}" \
-  --conn-password "{your-workload-password}"
-```
 
 ### Usage details
 
@@ -152,32 +124,6 @@ def run_scala_pi() -> Union[None, str, Dict[str, Any]]:
     return "example-scala-pi"
 ```
 Please refer for complete [example DAG](../docs/examples/cde_taskflow_example.py).
-
-#### CdwExecuteQueryOperator
-
-Executes hql code in CDW. This class inherits behavior from HiveOperator, and instantiates a CdwHook to do the work.
-
-Please refer the [additional preconditions](../docs/cdw-operator-preconditions.md) for CDW operator on custom Airflow environment.
-
-| Arguments | Type | Description |
-| :--- | :----   | :--- |
-| cli_conn_id | str | The Airflow connection id for the target CDW instance, default value `'hive_cli_default'` |
-| schema | str | The name of the DB schema, default value `'default'` |
-| hql | str | Hive query string |
-| hiveconfs | dict | An optional dictionary of key-value pairs to define hive configurations |
-| hiveconf_jinja_translate | bool |  default value `False` |
-| jdbc_driver | str | Package name of the Impala jdbc_driver, for instance "com.cloudera.impala.jdbc41.Driver". Required for Impala connections. None by default |
-| query_isolation | bool | Controls whether to use cdw's query isolation feature. Only hive warehouses support this at the moment. Default `True` |
-
-Example CDW operator DAG snippet: 
-```python
-cdw_step = CdwExecuteQueryOperator(
-    task_id='cdw-test',
-    dag=example_dag,
-    cli_conn_id='cdw-beeline',
-    hql=f"USE default; SELECT 'a', 'b', 1",
-)
-```
 
 ## Next steps
 

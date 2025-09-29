@@ -150,7 +150,8 @@ class CdeRunJobOperator(BaseOperator):
     DEFAULT_CONNECTION_ID = "cde_runtime_api"
 
     # NOTE: keep the decorators/cde.py up to date with the CdeRunJobOperator's parameters
-    def __init__(  # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments, too-many-positional-arguments
+    def __init__(
         self,
         job_name: str,
         variables: dict[str, Any] | None = None,
@@ -276,7 +277,10 @@ class CdeRunJobOperator(BaseOperator):
             try:
                 job_status = self._hook.check_job_run_status(self._job_run_id)
             except CdeHookException as err:
-                msg = f"Issue while checking job status. Exiting. Error details: {err}"
+                msg = (
+                    f"Issue while checking job status for job run {self._job_run_id}. "
+                    f"Exiting. Error details: {err}"
+                )
                 self.log.error(msg)
                 raise AirflowException(msg) from err
             except Exception as err:
@@ -287,26 +291,29 @@ class CdeRunJobOperator(BaseOperator):
                 self.log.error(msg)
                 raise AirflowException(msg) from err
             if job_status in ("starting", "running"):
-                msg = f"Job run in {job_status} status, checking again in {self.job_poll_interval} seconds"
+                msg = (
+                    f"Job run {self._job_run_id} in {job_status} status, checking again in "
+                    f"{self.job_poll_interval} seconds"
+                )
                 self.log.info(msg)
             elif job_status == "succeeded":
                 self._job_run_finished = True
-                msg = f"Job run completed with {job_status} status"
+                msg = f"Job run {self._job_run_id} completed with {job_status} status"
                 self.log.info(msg)
                 return
             elif job_status in ("failed", "killed", "unknown"):
                 self._job_run_finished = True
-                msg = f"Job run exited with {job_status} status"
+                msg = f"Job run {self._job_run_id} exited with {job_status} status"
                 self.log.error(msg)
                 raise AirflowException(msg)
             else:
-                msg = f"Got unexpected status when polling for job: {job_status}"
+                msg = f"Got unexpected status when polling for job {self._job_run_id}: {job_status}"
                 self.log.error(msg)
                 raise AirflowException(msg)
             time.sleep(self.job_poll_interval)
             check_time = int(time.time())
 
-        raise TimeoutError(f"Job run did not complete in {self.timeout} seconds")
+        raise TimeoutError(f"Job run {self._job_run_id} did not complete in {self.timeout} seconds")
 
     def get_request_id(self, context: dict[str, Any]) -> str:
         """Constructs a request_id based on the task_instance object in the provided context"""

@@ -50,7 +50,7 @@ default_args = {
 )
 def cde_taskflow_example():
     @task.cde(connection_id="default-vc", job_name="example-scala-pi")
-    def run_scala_pi() -> Union[None, str, Dict[str, Any]]:
+    def run_scala_pi() -> None | str | dict[str, Any]:
         """
         Runs a CDE Job with the given name, decorator's argument.
 
@@ -59,7 +59,7 @@ def cde_taskflow_example():
         return None
 
     @task.cde(connection_id="default-vc")
-    def run_scala_pi_job_name() -> Union[None, str, Dict[str, Any]]:
+    def run_scala_pi_job_name() -> None | str | dict[str, Any]:
         """
         Runs a CDE job with the given name, return value.
         The CDERunJobOperator parameters can be passed in the decorator's arguments.
@@ -75,7 +75,7 @@ def cde_taskflow_example():
     @task.cde(
         connection_id="default-vc",
     )
-    def run_scala_pi_parameters(num_executors: int) -> Union[None, str, Dict[str, Any]]:
+    def run_scala_pi_parameters(num_executors: int) -> None | str | dict[str, Any]:
         """
         Runs a CDE job with the given name and overrides.
         The CDERunJobOperator parameters can be passed in the decorator's arguments,
