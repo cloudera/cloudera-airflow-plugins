@@ -6,4 +6,3 @@ They are:
 
 - [CdeRunJobOperator](cde_operator_example.py) example DAG.
 - [CdeRunJobOperator with TaskFlow API](cde_taskflow_example.py) example DAG.
-- [CdwExecuteQueryOperator](cdw_operator_example.py) example DAG.

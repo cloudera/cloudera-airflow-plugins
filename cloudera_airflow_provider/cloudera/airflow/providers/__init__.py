@@ -32,3 +32,36 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
+"""Helper function for the package installation"""
+
+
+def get_provider_info():  # pragma: no cover , metadata only used for building
+    """Provides required metadata for the entrypoint in the setup.cfg"""
+    return {
+        "package-name": "cloudera-airflow-provider",
+        "name": ("Cloudera Airflow Provider"),
+        "description": """Provides Operators for running jobs on CDE.""",
+        "connection-types": [
+            {
+                "hook-class-name": "cloudera.airflow.providers.hooks.cde.CdeHook",
+                "connection-type": "cloudera_data_engineering",
+            }
+        ],
+        "task-decorators": [
+            {
+                "name": "cde",
+                "class-name": "cloudera.airflow.providers.decorators.cde.cde_task",
+            }
+        ],
+        "versions": [
+            "2.2.0",
+            "2.1.4",
+            "2.1.3",
+            "2.1.2",
+            "2.1.1",
+            "2.1.0",
+            "2.0.1",
+            "1.0.2",
+            "1.0.0",
+        ],
+    }

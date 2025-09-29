@@ -36,7 +36,8 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Callable, Collection, Mapping, Sequence
+from typing import Any
+from collections.abc import Callable, Collection, Mapping, Sequence
 
 from airflow.decorators.base import DecoratedOperator, TaskDecorator, task_decorator_factory
 from airflow.utils.context import Context, context_merge

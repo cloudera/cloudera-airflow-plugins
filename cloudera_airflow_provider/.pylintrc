@@ -92,6 +92,13 @@ disable=raw-checker-failed,
         ungrouped-imports,  # Disabled to avoid conflict with isort import order rules, which is enabled in the project.
         missing-module-docstring,
         import-outside-toplevel,    # We import outside toplevel to avoid cyclic imports
+       no-name-in-module,
+       logging-fstring-interpolation,
+       too-many-positional-arguments,
+       unexpected-keyword-arg,
+       use-dict-literal,
+       line-too-long,
+       wrong-import-order
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
@@ -483,6 +490,7 @@ valid-metaclass-classmethod-first-arg=cls
 # Maximum number of arguments for function / method.
 # BasPH: choose 10 because this was 80% of the sorted list of number of arguments above 5 (Pylint default)
 max-args=10
+max-positional-arguments=10
 
 # Maximum number of attributes for a class (see R0902).
 # BasPH: choose 15 because this was 80% of the sorted list of number of attributes above 7 (Pylint default)
@@ -521,4 +529,4 @@ min-public-methods=0
 
 # Exceptions that will emit a warning when being caught. Defaults to
 # "Exception".
-overgeneral-exceptions=Exception
+overgeneral-exceptions=builtins.Exception

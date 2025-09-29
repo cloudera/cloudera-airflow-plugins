@@ -1,6 +1,5 @@
 [run]
-# cdw hook shall be enabled as soon as we refactor / improve it!
-omit = *tests*,*cloudera/cdp/security/cdp_requests/*,*setup.py,*cdw_*.py
+omit = *tests*,*setup.py
 
 
 [report]

@@ -396,11 +396,11 @@ class CdeHook(BaseHook):  # type: ignore
         retry_handler = RetryHandler()
 
         try:
-            extra_options: dict[str, Any] = dict(
-                timeout=timeout,
+            extra_options = {
+                "timeout": timeout,
                 # we check the response ourselves in RetryHandler
-                check_response=False,
-            )
+                "check_response": False,
+            }
 
             if self.connection.insecure:
                 self.log.debug("Setting session verify to False")
@@ -420,21 +420,21 @@ class CdeHook(BaseHook):  # type: ignore
             # of the headers
             request_extra_headers = {"insecure": str(self.connection.insecure)}
 
-            common_kwargs: dict[str, Any] = dict(
-                _retry_args=dict(
-                    wait=CustomWait(self.log),
-                    stop=CustomStop(
+            common_kwargs = {
+                "_retry_args": {
+                    "wait": CustomWait(self.log),
+                    "stop": CustomStop(
                         self.log,
                         self.num_retries,
                         CdeHook.DEFAULT_NUM_RETRIES_RATE_LIMITED,
                         CdeHook.RETRY_TIME_SPAN_FOR_RATE_LIMIT,
                     ),
-                    retry=retry_handler,
-                ),
-                endpoint=endpoint,
-                extra_options=extra_options,
-                headers=request_extra_headers,
-            )
+                    "retry": retry_handler,
+                },
+                "endpoint": endpoint,
+                "extra_options": extra_options,
+                "headers": request_extra_headers,
+            }
 
             if self.connection.is_external():
                 common_kwargs = {**common_kwargs, "auth": BearerAuth(cde_token)}
