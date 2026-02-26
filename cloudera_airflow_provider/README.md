@@ -16,16 +16,21 @@ Change log: [can be found here](CHANGELOG.md)
 
 ### Installation
 
-[Cloudera Airflow Provider](https://pypi.org/project/cloudera-airflow-provider/) is a python package that can be simply installed through pip:
- 
+[Cloudera Airflow Provider](https://pypi.org/project/cloudera-airflow-provider/) is a python package that can be installed:
+
+through pip:
 ```shell script
 pip install cloudera-airflow-provider
 ```
+or using uv:
 
+```shell script
+uv pip install cloudera-airflow-provider
+```
 ### Setting up the Airflow Connections
 
 #### Cloudera Data Engineering connection
-  
+
 Connection contain parameters:
 
 | Parameter | Description | Value |
@@ -33,7 +38,7 @@ Connection contain parameters:
 | ID | Id of the Airflow connection of the target CDE Virtual cluster | Simple string making the Virtual cluster identifiable |
 | Type | Airflow connection type | 'cloudera_data_engineering' Note: you need to set up operator package first |
 | Host | [Virtual Cluster](https://docs.cloudera.com/data-engineering/cloud/manage-clusters/topics/cde-create-cluster.html) Jobs Api URL | From the CDE home page, go to Overview > Virtual Clusters > Cluster Details of the Virtual Cluster (VC) where you want the CDE job to run. Click JOBS API URL to copy the URL |
-| Login | CDP access key of the account for running jobs on the CDE VC | Customer credentials | 
+| Login | CDP access key of the account for running jobs on the CDE VC | Customer credentials |
 | Password | Provide the CDP private key associated to the given CDP Access Key | Customer credentials |
 | Extra | Optional settings in JSON format | Please refer table below |
 
@@ -43,7 +48,7 @@ Extra parameters for Cloudera Data Engineering connection:
 | :--- | :---- | :--- |
 | proxy | Optional, translates to `https_proxy`/`HTTPS_PROXY` env. variables | None |
 | cache_dir | Optional, to replace default cache_directory e.g. if insufficient access rights | `token_cache` |
-| region | Optional, CDP Control Plane region ("us-west-1", "eu-1" or "ap-1") | Will be inferred automatically, if not specified |
+| region | Optional, CDP Control Plane region ("us-west-1", "eu-1" or "ap-1") | Will be inferred automatically for Airflow 2, if not specified. Recommended to be configured for Airflow 3 for improved performance. |
 
 Extra parameters for Cloudera Data Engineering connection for development use only (do not use them unless you know what you are doing) :
 
@@ -91,10 +96,10 @@ must have already been created via the specified virtual cluster jobs API.
 
 ##### Retries
 The `api_retries` parameter from the above table specifies the number of times to retry an API request.
-However, in case of [HTTP 429 Too Many Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429), 
+However, in case of [HTTP 429 Too Many Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429),
 the retry logic is different, and it is working as follows:
 
-The rate limited retries are stopped either if we reached one of: 
+The rate limited retries are stopped either if we reached one of:
 1. More than 2 hours of time frame of retrying
 2. 1800 retries, 4 seconds between retries gives 2 hours of retrying.
 No more retries will be performed if any of these conditions is satisfied.
@@ -129,6 +134,6 @@ Please refer for complete [example DAG](../docs/examples/cde_taskflow_example.py
 
 You can learn more about CDE concepts [here](https://docs.cloudera.com/data-engineering/cloud/cli-access/topics/cde-cli-concepts.html).
 
-More examples you can find with [example DAGs](../docs/examples/README.md). 
+More examples you can find with [example DAGs](../docs/examples/README.md).
 
 Please refer to the [official documentation](https://docs.cloudera.com/data-engineering/cloud/orchestrate-workflows/topics/cde-airflow-dag-pipeline.html) for how to integrate these operators into your pipelines.

@@ -2,7 +2,7 @@
 
 Collection of Airflow related adds-on specific to Cloudera.
 
-## Cloudera Airflow provider
+## Cloudera Airflow provider.
 
 Data orchestration with Apache Airflow securely at scale to increase efficiency and accelerate time to value.
 
@@ -21,10 +21,6 @@ Data orchestration with Apache Airflow securely at scale to increase efficiency 
 - [Usage details](/cloudera_airflow_provider#usage-details)
 
     - [CdeRunJobOperator](/cloudera_airflow_provider#cderunjoboperator)
-    
-    - [CdwExecuteQueryOperator](/cloudera_airflow_provider#cdwexecutequeryoperator)
-        
-        - [CDW operator preconditions](docs/cdw-operator-preconditions.md)
     
 - [Next steps](/cloudera_airflow_provider#next-steps)
 

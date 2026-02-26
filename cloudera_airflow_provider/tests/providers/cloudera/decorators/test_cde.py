@@ -1,24 +1,24 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2022
+#  Copyright (c) Cloudera, Inc. 2021-2026
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
-#  NOTE: Cloudera open source products are modular software products
+#  NOTE: Cloudera software products are modular software products
 #  made up of hundreds of individual components, each of which was
-#  individually copyrighted.  Each Cloudera open source product is a
+#  individually copyrighted.  Each Cloudera software product is a
 #  collective work under U.S. Copyright Law. Your license to use the
 #  collective work is as provided in your written agreement with
-#  Cloudera.  Used apart from the collective work, this file is
+#  Cloudera.  Used apart from the collective work, this specific file or component is
 #  licensed for your use pursuant to the open source license
 #  identified above.
 #
-#  This code is provided to you pursuant a written agreement with
+#  Cloudera software products are provided to you pursuant a written agreement with
 #  (i) Cloudera, Inc. or (ii) a third-party authorized to distribute
-#  this code. If you do not have a written agreement with Cloudera nor
+#  the Cloudera software products. If you do not have a written agreement with Cloudera nor
 #  with an authorized and properly licensed third party, you do not
-#  have any rights to access nor to use this code.
+#  have any rights to access nor to use any Cloudera software product.
 #
-#  Absent a written agreement with Cloudera, Inc. (“Cloudera”) to the
+#  Absent a written agreement with Cloudera, Inc. ("Cloudera") to the
 #  contrary, A) CLOUDERA PROVIDES THIS CODE TO YOU WITHOUT WARRANTIES OF ANY
 #  KIND; (B) CLOUDERA DISCLAIMS ANY AND ALL EXPRESS AND IMPLIED
 #  WARRANTIES WITH RESPECT TO THIS CODE, INCLUDING BUT NOT LIMITED TO
@@ -41,9 +41,11 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
+from packaging.version import Version
 import pytest
 from parameterized import parameterized
 
+from airflow import __version__ as airflow_version
 from airflow.decorators import task
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.connection import Connection
@@ -55,6 +57,7 @@ from cloudera.airflow.providers.operators.cde import CdeRunJobOperator
 TEST_JOB_NAME = "testjob"
 TEST_JOB_RUN_ID = 10
 TEST_AIRFLOW_DAG_ID = "dag_1"
+TEST_AIRFLOW_DAG_VERSION_ID = 1
 TEST_AIRFLOW_RUN_ID = "run_1"
 TEST_AIRFLOW_RUN_EXECUTION_DATE = datetime.now()
 TEST_AIRFLOW_TASK_ID = "task_1"
@@ -102,15 +105,22 @@ TEST_DEFAULT_CONNECTION = Connection(
 
 def mock_task_instance_for_context():
     """Mocks task_instance for test context."""
-    TEST_CONTEXT["task_instance"] = TaskInstance(
-        execution_date=TEST_AIRFLOW_RUN_EXECUTION_DATE,
-        task=BaseOperator(
-            task_id=TEST_AIRFLOW_TASK_ID, dag=DAG(TEST_AIRFLOW_DAG_ID, start_date=datetime.now())
-        ),
+    operator_task = BaseOperator(
+        task_id=TEST_AIRFLOW_TASK_ID, dag=DAG(TEST_AIRFLOW_DAG_ID, start_date=datetime.now())
     )
+    if Version(airflow_version).major < 3:
+        TEST_CONTEXT["task_instance"] = TaskInstance(
+            execution_date=TEST_AIRFLOW_RUN_EXECUTION_DATE,
+            task=operator_task,
+        )
+    else:
+        TEST_CONTEXT["task_instance"] = TaskInstance(
+            dag_version_id=TEST_AIRFLOW_DAG_VERSION_ID,
+            task=operator_task,
+        )
 
 
-@mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+@mock.patch("sqlalchemy.orm.Query.scalar", return_value=TEST_AIRFLOW_RUN_ID)
 @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
 @mock.patch.object(CdeHook, "check_job_run_status", side_effect=["starting", "running", "succeeded"])
 @mock.patch.object(CdeHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
@@ -264,7 +274,7 @@ class CdeRunJobTaskTest(unittest.TestCase):
                 "job_poll_interval": TEST_JOB_POLL_INTERVAL,
                 "api_retries": TEST_API_RETRIES,
                 "api_timeout": TEST_API_TIMEOUT,
-                "user": 'silently_ignored',
+                "user": "silently_ignored",
                 "abc": "sliently_ignored",
             }
 

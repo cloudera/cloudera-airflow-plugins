@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.3.0] - 2026-02-25
+- Correctly handle region for Airflow 3
+- Adjust codebase for actual Python versions
+- Compatibility with legacy import paths
+- Added support of UV installer
+
 ## [2.2.0] - 2025-09-29
 - The run-id is logged from the CDERunJobOperator at each poll interval
 - Removed: CDWOperator, CDWHook, CDWSensor

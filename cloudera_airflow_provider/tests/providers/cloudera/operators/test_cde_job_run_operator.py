@@ -1,24 +1,24 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2022
+#  Copyright (c) Cloudera, Inc. 2021-2026
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
-#  NOTE: Cloudera open source products are modular software products
+#  NOTE: Cloudera software products are modular software products
 #  made up of hundreds of individual components, each of which was
-#  individually copyrighted.  Each Cloudera open source product is a
+#  individually copyrighted.  Each Cloudera software product is a
 #  collective work under U.S. Copyright Law. Your license to use the
 #  collective work is as provided in your written agreement with
-#  Cloudera.  Used apart from the collective work, this file is
+#  Cloudera.  Used apart from the collective work, this specific file or component is
 #  licensed for your use pursuant to the open source license
 #  identified above.
 #
-#  This code is provided to you pursuant a written agreement with
+#  Cloudera software products are provided to you pursuant a written agreement with
 #  (i) Cloudera, Inc. or (ii) a third-party authorized to distribute
-#  this code. If you do not have a written agreement with Cloudera nor
+#  the Cloudera software products. If you do not have a written agreement with Cloudera nor
 #  with an authorized and properly licensed third party, you do not
-#  have any rights to access nor to use this code.
+#  have any rights to access nor to use any Cloudera software product.
 #
-#  Absent a written agreement with Cloudera, Inc. (“Cloudera”) to the
+#  Absent a written agreement with Cloudera, Inc. ("Cloudera") to the
 #  contrary, A) CLOUDERA PROVIDES THIS CODE TO YOU WITHOUT WARRANTIES OF ANY
 #  KIND; (B) CLOUDERA DISCLAIMS ANY AND ALL EXPRESS AND IMPLIED
 #  WARRANTIES WITH RESPECT TO THIS CODE, INCLUDING BUT NOT LIMITED TO
@@ -44,6 +44,9 @@ from datetime import datetime
 from unittest import mock
 from unittest.mock import Mock, call
 
+from packaging.version import Version
+
+from airflow import __version__ as airflow_version
 from airflow.exceptions import AirflowException
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.connection import Connection
@@ -55,6 +58,7 @@ from cloudera.airflow.providers.operators.cde import CdeRunJobOperator
 TEST_JOB_NAME = "testjob"
 TEST_JOB_RUN_ID = 10
 TEST_AIRFLOW_DAG_ID = "dag_1"
+TEST_AIRFLOW_DAG_VERSION_ID = 1
 TEST_AIRFLOW_RUN_ID = "run_1"
 TEST_AIRFLOW_RUN_EXECUTION_DATE = datetime.now()
 TEST_AIRFLOW_TASK_ID = "task_1"
@@ -107,12 +111,17 @@ TEST_DEFAULT_CONNECTION = Connection(
 
 def mock_task_instance_for_context():
     """Mock the task instance for the context"""
-    TEST_CONTEXT["task_instance"] = TaskInstance(
-        execution_date=TEST_AIRFLOW_RUN_EXECUTION_DATE,
-        task=BaseOperator(
-            task_id=TEST_AIRFLOW_TASK_ID, dag=DAG(TEST_AIRFLOW_DAG_ID, start_date=datetime.now())
-        ),
-    )
+    task = BaseOperator(task_id=TEST_AIRFLOW_TASK_ID, dag=DAG(TEST_AIRFLOW_DAG_ID, start_date=datetime.now()))
+    if Version(airflow_version).major < 3:
+        TEST_CONTEXT["task_instance"] = TaskInstance(
+            execution_date=TEST_AIRFLOW_RUN_EXECUTION_DATE, task=task
+        )
+    else:
+        TEST_CONTEXT["task_instance"] = TaskInstance(
+            run_id=TEST_AIRFLOW_RUN_ID,
+            dag_version_id=TEST_AIRFLOW_DAG_VERSION_ID,
+            task=task,
+        )
 
 
 @mock.patch.object(CdeHook, "get_connection", return_value=TEST_DEFAULT_CONNECTION)
@@ -197,7 +206,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         self.assertEqual(cde_operator.get_hook().api_timeout, TEST_API_TIMEOUT)
 
     # pylint: disable=unused-argument, too-many-positional-arguments
-    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    @mock.patch("sqlalchemy.orm.Query.scalar", return_value=TEST_AIRFLOW_RUN_ID)
     @mock.patch.object(CdeHook, "kill_job_run")
     @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
     @mock.patch.object(CdeHook, "check_job_run_status", side_effect=["starting", "running", "succeeded"])
@@ -229,7 +238,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         )
         kill_job_mock.assert_not_called()
 
-    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    @mock.patch("sqlalchemy.orm.Query.scalar", return_value=TEST_AIRFLOW_RUN_ID)
     @mock.patch.object(CdeHook, "kill_job_run")
     @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
     @mock.patch.object(CdeHook, "check_job_run_status")
@@ -325,7 +334,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
             )
             check_job_mock.assert_called()
 
-    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    @mock.patch("sqlalchemy.orm.Query.scalar", return_value=TEST_AIRFLOW_RUN_ID)
     @mock.patch.object(CdeHook, "kill_job_run")
     @mock.patch.object(CdeHook, "submit_job", return_value=TEST_JOB_RUN_ID)
     @mock.patch.object(CdeHook, "check_job_run_status", side_effect=["starting", "running", "bad_status"])
@@ -378,7 +387,7 @@ class CdeRunJobOperatorTest(unittest.TestCase):
         self.assertEqual(dict(cde_operator.variables, **{"var1": "someval_20201125"}), cde_operator.variables)
         self.assertDictEqual(cde_operator.overrides, {"spark": {"conf": {"myparam": "val_20201125"}}})
 
-    @mock.patch('sqlalchemy.orm.Query.scalar', return_value=TEST_AIRFLOW_RUN_ID)
+    @mock.patch("sqlalchemy.orm.Query.scalar", return_value=TEST_AIRFLOW_RUN_ID)
     def test_get_request_id(self, db_mock, get_connection):
         """Test get_request_id calculation"""
         cde_operator = CdeRunJobOperator(
