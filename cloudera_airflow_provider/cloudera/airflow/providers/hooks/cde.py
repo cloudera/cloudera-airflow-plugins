@@ -1,24 +1,24 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2022
+#  Copyright (c) Cloudera, Inc. 2021-2026
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
-#  NOTE: Cloudera open source products are modular software products
+#  NOTE: Cloudera software products are modular software products
 #  made up of hundreds of individual components, each of which was
-#  individually copyrighted.  Each Cloudera open source product is a
+#  individually copyrighted.  Each Cloudera software product is a
 #  collective work under U.S. Copyright Law. Your license to use the
 #  collective work is as provided in your written agreement with
-#  Cloudera.  Used apart from the collective work, this file is
+#  Cloudera.  Used apart from the collective work, this specific file or component is
 #  licensed for your use pursuant to the open source license
 #  identified above.
 #
-#  This code is provided to you pursuant a written agreement with
+#  Cloudera software products are provided to you pursuant a written agreement with
 #  (i) Cloudera, Inc. or (ii) a third-party authorized to distribute
-#  this code. If you do not have a written agreement with Cloudera nor
+#  the Cloudera software products. If you do not have a written agreement with Cloudera nor
 #  with an authorized and properly licensed third party, you do not
-#  have any rights to access nor to use this code.
+#  have any rights to access nor to use any Cloudera software product.
 #
-#  Absent a written agreement with Cloudera, Inc. (“Cloudera”) to the
+#  Absent a written agreement with Cloudera, Inc. ("Cloudera") to the
 #  contrary, A) CLOUDERA PROVIDES THIS CODE TO YOU WITHOUT WARRANTIES OF ANY
 #  KIND; (B) CLOUDERA DISCLAIMS ANY AND ALL EXPRESS AND IMPLIED
 #  WARRANTIES WITH RESPECT TO THIS CODE, INCLUDING BUT NOT LIMITED TO
@@ -46,11 +46,13 @@ import typing
 from datetime import timedelta
 from typing import Any
 
+from packaging.version import Version
 import requests
 import tenacity  # type: ignore
 from tenacity.stop import stop_base
 from tenacity.wait import wait_base
 
+from airflow import __version__ as airflow_version
 from airflow.configuration import conf
 from airflow.exceptions import AirflowConfigException, AirflowException  # type: ignore
 from airflow.hooks.base import BaseHook  # type: ignore
@@ -67,7 +69,7 @@ DEFAULT_RETRY_INTERVAL = 4
 RETRY_AFTER_HEADER = "Retry-After"
 TimeUnitType = typing.Union[int, float, timedelta]
 
-HTTP_EMPTY_BODY_RESPONSES = [b'', None]
+HTTP_EMPTY_BODY_RESPONSES = [b"", None]
 
 
 class CustomWait(wait_base):
@@ -333,7 +335,7 @@ class CdeHook(BaseHook):  # type: ignore
         else:
             try:
                 num_retries_val = conf.getint(
-                    'cde', 'DEFAULT_NUM_RETRIES', fallback=CdeHook.DEFAULT_NUM_RETRIES
+                    "cde", "DEFAULT_NUM_RETRIES", fallback=CdeHook.DEFAULT_NUM_RETRIES
                 )
             except AirflowConfigException as acerr:
                 self.log.warning(acerr)
@@ -347,7 +349,7 @@ class CdeHook(BaseHook):  # type: ignore
         else:
             try:
                 api_timeout_val = conf.getint(
-                    'cde', 'DEFAULT_API_TIMEOUT', fallback=CdeHook.DEFAULT_API_TIMEOUT
+                    "cde", "DEFAULT_API_TIMEOUT", fallback=CdeHook.DEFAULT_API_TIMEOUT
                 )
             except AirflowConfigException as acerr:
                 self.log.warning(acerr)
@@ -502,8 +504,13 @@ class CdeHook(BaseHook):  # type: ignore
             )
             cde_token = cde_auth.get_cde_authentication_token().access_token
             self.log.debug("CDE token successfully acquired")
-            if not self.connection.region and cdp_auth.region is not None:
-                # Save region, so that any subsequent calls would not need to infer it again
+            if (
+                Version(airflow_version).major < 3
+                and not self.connection.region
+                and cdp_auth.region is not None
+            ):
+                # Save region in case of Airflow 2, so that any subsequent calls
+                # would not need to infer it again
                 self.log.debug(
                     "Saving inferred region %s to connection with connection_id %s",
                     cdp_auth.region,
@@ -579,13 +586,13 @@ class CdeHook(BaseHook):  # type: ignore
             # Not tested because it should have never been introduced in the first place
             self.log.warning("Proxy user is not yet supported. Setting it to None.")  # pragma: no cover
 
-        body = dict(
-            variables=variables,
-            overrides=overrides,
+        body = {
+            "variables": variables,
+            "overrides": overrides,
             # Shall be updated to proxy_user when we support this feature
-            user=None,
-            requestID=request_id,
-        )
+            "user": None,
+            "requestID": request_id,
+        }
         response = self._do_api_call("POST", f"/jobs/{job_name}/run", self.api_timeout, body)
         if response is None:
             msg = f"Unexpected 'None' response for '{job_name}' job."
@@ -634,13 +641,16 @@ class CdeHook(BaseHook):  # type: ignore
             raise CdeHookException(err, msg) from err
         return response_status
 
-    def get_conn(self):  # pylint: disable=missing-function-docstring; not required for CdeHook
+    def get_conn(self):
+        """Not implemented for CdeHook."""
         raise NotImplementedError
 
-    def get_pandas_df(self, sql):  # pylint: disable=missing-function-docstring; not required for CdeHook
+    def get_pandas_df(self, sql):
+        """Not implemented for CdeHook."""
         raise NotImplementedError
 
-    def get_records(self, sql):  # pylint: disable=missing-function-docstring; not required for CdeHook
+    def get_records(self, sql):
+        """Not implemented for CdeHook."""
         raise NotImplementedError
 
 
@@ -661,7 +671,7 @@ class RetryHandler:
 
     def __init__(self) -> None:
         self._errors: set[Any] = set()
-        self.log = logging.getLogger(self.__class__.__module__ + '.' + self.__class__.__name__)
+        self.log = logging.getLogger(self.__class__.__module__ + "." + self.__class__.__name__)
 
     @property
     def errors(self) -> set[Any]:

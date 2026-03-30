@@ -1,24 +1,24 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2022
+#  Copyright (c) Cloudera, Inc. 2021-2026
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
-#  NOTE: Cloudera open source products are modular software products
+#  NOTE: Cloudera software products are modular software products
 #  made up of hundreds of individual components, each of which was
-#  individually copyrighted.  Each Cloudera open source product is a
+#  individually copyrighted.  Each Cloudera software product is a
 #  collective work under U.S. Copyright Law. Your license to use the
 #  collective work is as provided in your written agreement with
-#  Cloudera.  Used apart from the collective work, this file is
+#  Cloudera.  Used apart from the collective work, this specific file or component is
 #  licensed for your use pursuant to the open source license
 #  identified above.
 #
-#  This code is provided to you pursuant a written agreement with
+#  Cloudera software products are provided to you pursuant a written agreement with
 #  (i) Cloudera, Inc. or (ii) a third-party authorized to distribute
-#  this code. If you do not have a written agreement with Cloudera nor
+#  the Cloudera software products. If you do not have a written agreement with Cloudera nor
 #  with an authorized and properly licensed third party, you do not
-#  have any rights to access nor to use this code.
+#  have any rights to access nor to use any Cloudera software product.
 #
-#  Absent a written agreement with Cloudera, Inc. (“Cloudera”) to the
+#  Absent a written agreement with Cloudera, Inc. ("Cloudera") to the
 #  contrary, A) CLOUDERA PROVIDES THIS CODE TO YOU WITHOUT WARRANTIES OF ANY
 #  KIND; (B) CLOUDERA DISCLAIMS ANY AND ALL EXPRESS AND IMPLIED
 #  WARRANTIES WITH RESPECT TO THIS CODE, INCLUDING BUT NOT LIMITED TO
@@ -32,6 +32,7 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
+"""CDE Operator module for running jobs on Cloudera Data Engineering."""
 
 from __future__ import annotations
 
@@ -317,16 +318,16 @@ class CdeRunJobOperator(BaseOperator):
 
     def get_request_id(self, context: dict[str, Any]) -> str:
         """Constructs a request_id based on the task_instance object in the provided context"""
-        if 'task_instance' in context:
+        if "task_instance" in context:
             # Airflow before 2.2.0 didn't have a run_id field,
             # so we should use execution_date for backward compatibility
             try:
-                run_identifier = context['task_instance'].run_id
+                run_identifier = context["task_instance"].run_id
             except Exception as err:  # pylint: disable=broad-except
                 self.log.warning(
                     f"Missing run_id field for task instance {err}, using execution_date as run identifier"
                 )
-                run_identifier = context['task_instance'].execution_date.strftime(FORMAT_DATE_TIME)
+                run_identifier = context["task_instance"].execution_date.strftime(FORMAT_DATE_TIME)
             return (
                 f"{context['task_instance'].dag_id}#"
                 f"{run_identifier}#"

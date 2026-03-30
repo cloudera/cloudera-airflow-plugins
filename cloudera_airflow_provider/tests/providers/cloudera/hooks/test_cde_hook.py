@@ -1,24 +1,24 @@
 #  Cloudera Airflow Provider
-#  (C) Cloudera, Inc. 2021-2022
+#  Copyright (c) Cloudera, Inc. 2021-2026
 #  All rights reserved.
 #  Applicable Open Source License: Apache License Version 2.0
 #
-#  NOTE: Cloudera open source products are modular software products
+#  NOTE: Cloudera software products are modular software products
 #  made up of hundreds of individual components, each of which was
-#  individually copyrighted.  Each Cloudera open source product is a
+#  individually copyrighted.  Each Cloudera software product is a
 #  collective work under U.S. Copyright Law. Your license to use the
 #  collective work is as provided in your written agreement with
-#  Cloudera.  Used apart from the collective work, this file is
+#  Cloudera.  Used apart from the collective work, this specific file or component is
 #  licensed for your use pursuant to the open source license
 #  identified above.
 #
-#  This code is provided to you pursuant a written agreement with
+#  Cloudera software products are provided to you pursuant a written agreement with
 #  (i) Cloudera, Inc. or (ii) a third-party authorized to distribute
-#  this code. If you do not have a written agreement with Cloudera nor
+#  the Cloudera software products. If you do not have a written agreement with Cloudera nor
 #  with an authorized and properly licensed third party, you do not
-#  have any rights to access nor to use this code.
+#  have any rights to access nor to use any Cloudera software product.
 #
-#  Absent a written agreement with Cloudera, Inc. (“Cloudera”) to the
+#  Absent a written agreement with Cloudera, Inc. ("Cloudera") to the
 #  contrary, A) CLOUDERA PROVIDES THIS CODE TO YOU WITHOUT WARRANTIES OF ANY
 #  KIND; (B) CLOUDERA DISCLAIMS ANY AND ALL EXPRESS AND IMPLIED
 #  WARRANTIES WITH RESPECT TO THIS CODE, INCLUDING BUT NOT LIMITED TO
@@ -43,17 +43,21 @@ import os
 import unittest
 from concurrent.futures import Future
 from json import JSONDecodeError
-from typing import Callable
+from collections.abc import Callable
 from unittest import mock
 from unittest.mock import call
 
+from packaging.version import Version
+import pytest
 from requests import Session
 from requests.exceptions import ConnectionError, HTTPError, Timeout  # pylint: disable=redefined-builtin
 from retrying import RetryError  # type: ignore
 
+from airflow import __version__ as airflow_version
 from airflow.exceptions import AirflowException
-from airflow.hooks.base_hook import BaseHook
+from airflow.hooks.base import BaseHook
 from airflow.models import Connection
+from tests.providers.cloudera.utils import _get_call_arguments, _make_response
 from cloudera.airflow.providers.hooks.cde import (
     DEFAULT_RETRY_INTERVAL,
     RETRY_AFTER_HEADER,
@@ -61,7 +65,6 @@ from cloudera.airflow.providers.hooks.cde import (
     CdeHookException,
 )
 from cloudera.cdp.security.cde_security import CdeApiTokenAuth, CdeTokenAuthResponse
-from tests.providers.cloudera.utils import _get_call_arguments, _make_response
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.DEBUG)
@@ -121,7 +124,7 @@ class CdeHookTest(unittest.TestCase):
     """Unit tests for CdeHook"""
 
     @contextlib.contextmanager
-    def tenacity_wait_mocks(self, wait_impl: Callable = None):
+    def tenacity_wait_mocks(self, wait_impl: Callable | None = None):
         """
         Creates mocks for tenacity.wait_fixed and tenacity.wait_exponential.
         The tests require to verify calls of the constructor of wait_fixed
@@ -142,9 +145,10 @@ class CdeHookTest(unittest.TestCase):
             LOG.debug("Called wait_fixed or wait_exponential mock. Arg: %s", retry_state)
             return actual_wait_seconds
 
-        with mock.patch('tenacity.wait_fixed') as wait_fixed_cls_mock, mock.patch(
-            'tenacity.wait_exponential'
-        ) as wait_exp_cls_mock:
+        with (
+            mock.patch("tenacity.wait_fixed") as wait_fixed_cls_mock,
+            mock.patch("tenacity.wait_exponential") as wait_exp_cls_mock,
+        ):
             arbitrary_ctor_param = -1111
             wait_fixed_obj = wait_fixed_cls_mock(arbitrary_ctor_param)
             wait_exp_obj = wait_exp_cls_mock(arbitrary_ctor_param)
@@ -152,7 +156,7 @@ class CdeHookTest(unittest.TestCase):
             wait_fixed_obj.side_effect = wait_very_short
             wait_exp_obj.side_effect = wait_very_short
 
-            if wait_impl:
+            if wait_impl is not None:
                 wait_exp_obj.side_effect = wait_impl
                 wait_fixed_obj.side_effect = wait_impl
 
@@ -160,7 +164,7 @@ class CdeHookTest(unittest.TestCase):
 
     @contextlib.contextmanager
     def tenacity_stop_mocks(
-        self, stop_after_attempt_impl: Callable = None, stop_after_delay_impl: Callable = None
+        self, stop_after_attempt_impl: Callable | None = None, stop_after_delay_impl: Callable | None = None
     ):
         """
         Creates mocks for tenacity.stop_after_attempt and tenacity.stop_after_delay.
@@ -177,18 +181,19 @@ class CdeHookTest(unittest.TestCase):
             LOG.debug("Called never_stop_impl on mock. Arg: %s", retry_state)
             return False
 
-        with mock.patch('tenacity.stop_after_attempt') as stop_after_attempt_cls_mock, mock.patch(
-            'tenacity.stop_after_delay'
-        ) as stop_after_delay_cls_mock:
+        with (
+            mock.patch("tenacity.stop_after_attempt") as stop_after_attempt_cls_mock,
+            mock.patch("tenacity.stop_after_delay") as stop_after_delay_cls_mock,
+        ):
             arbitrary_ctor_param = -1111
             stop_after_attempt_obj = stop_after_attempt_cls_mock(arbitrary_ctor_param)
             stop_after_attempt_obj.side_effect = never_stop_impl
-            if stop_after_attempt_impl:
+            if stop_after_attempt_impl is not None:
                 stop_after_attempt_obj.side_effect = stop_after_attempt_impl
 
             stop_after_delay_obj = stop_after_delay_cls_mock(arbitrary_ctor_param)
             stop_after_delay_obj.side_effect = never_stop_impl
-            if stop_after_delay_impl:
+            if stop_after_delay_impl is not None:
                 stop_after_delay_obj.side_effect = stop_after_delay_impl
 
             yield (
@@ -198,16 +203,20 @@ class CdeHookTest(unittest.TestCase):
                 stop_after_delay_obj,
             )
 
-    @mock.patch.object(
-        BaseHook,
-        "get_connection",
-        return_value=_get_test_connection(extra='{"insecure": False, "region": "us-west-1"}'),
+    @pytest.mark.skipif(
+        Version(airflow_version).major >= 3,
+        reason="Airflow 3 doesn't allow creating a connection with incorrect json",
     )
-    def test_wrong_extra_in_connection(self, connection_mock):
+    def test_wrong_extra_in_connection(self):
         """Test when wrong input is provided in the extra field of the connection"""
-        with self.assertRaises(ValueError):
-            CdeHook()
-        connection_mock.assert_called()
+        with mock.patch.object(
+            BaseHook,
+            "get_connection",
+            return_value=_get_test_connection(extra='{"insecure": False, "region": "us-west-1"}'),
+        ) as connection_mock:
+            with self.assertRaises(ValueError):
+                CdeHook()
+            connection_mock.assert_called()
 
     @mock.patch(GET_CDE_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
     @mock.patch.object(Session, "send", return_value=_make_response(200, {"appName": TEST_CLUSTER_NAME}, ""))
@@ -647,9 +656,10 @@ class CdeHookTest(unittest.TestCase):
             LOG.debug("Called stop_after_attempt_impl on mock. Arg: %s", retry_state)
             return retry_state.attempt_number >= 25
 
-        with self.tenacity_wait_mocks() as wait_mocks, self.tenacity_stop_mocks(
-            stop_after_attempt_impl=stop_after_attempt_impl
-        ) as stop_mocks:
+        with (
+            self.tenacity_wait_mocks() as wait_mocks,
+            self.tenacity_stop_mocks(stop_after_attempt_impl=stop_after_attempt_impl) as stop_mocks,
+        ):
             wait_fixed_cls_mock = wait_mocks[0]
             wait_exp_obj_mock = wait_mocks[1]
 
@@ -702,9 +712,10 @@ class CdeHookTest(unittest.TestCase):
             LOG.debug("Called stop_after_attempt_impl on mock. Arg: %s", retry_state)
             return retry_state.attempt_number >= 25
 
-        with self.tenacity_wait_mocks() as wait_mocks, self.tenacity_stop_mocks(
-            stop_after_attempt_impl=stop_after_attempt_impl
-        ) as stop_mocks:
+        with (
+            self.tenacity_wait_mocks() as wait_mocks,
+            self.tenacity_stop_mocks(stop_after_attempt_impl=stop_after_attempt_impl) as stop_mocks,
+        ):
             wait_fixed_cls_mock = wait_mocks[0]
             wait_exp_obj_mock = wait_mocks[1]
 
@@ -755,9 +766,10 @@ class CdeHookTest(unittest.TestCase):
             LOG.debug("Called wait_fixed or wait_exponential mock. Arg: %s", retry_state)
             return 1
 
-        with self.tenacity_wait_mocks(wait_impl=wait_1_second) as wait_mocks, self.tenacity_stop_mocks(
-            stop_after_delay_impl=stop_after_delay_impl
-        ) as stop_mocks:
+        with (
+            self.tenacity_wait_mocks(wait_impl=wait_1_second) as wait_mocks,
+            self.tenacity_stop_mocks(stop_after_delay_impl=stop_after_delay_impl) as stop_mocks,
+        ):
             wait_fixed_cls_mock = wait_mocks[0]
             wait_exp_obj_mock = wait_mocks[1]
 
@@ -1092,7 +1104,7 @@ class CdeHookTest(unittest.TestCase):
         cde_mock.assert_called()
         connection_mock.assert_called()
         # Only called once because never retried
-        (session_send_mock.call_count, 1)
+        self.assertEqual(session_send_mock.call_count, 1)
 
         self.assertIsInstance(err.exception.raised_from, HTTPError)
 
@@ -1182,7 +1194,7 @@ class CdeHookTest(unittest.TestCase):
             proxies=mock.ANY,
             stream=False,
             timeout=CdeHook.DEFAULT_API_TIMEOUT // 10,
-            verify='/ca_cert/letsencrypt-stg-root-x1.pem',
+            verify="/ca_cert/letsencrypt-stg-root-x1.pem",
         )
 
     @mock.patch.dict(os.environ, {"AIRFLOW__CDE__DEFAULT_API_TIMEOUT": "450"})

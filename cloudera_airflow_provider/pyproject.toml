@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloudera-airflow-provider"
+version = "2.3.0"
+description = "Cloudera Airflow Plugins"
+requires-python = ">=3.10"
+dependencies = [
+  "apache-airflow>=2.9.3",
+  "apache-airflow-providers-http",
+  "cryptography>=3.3.2",
+  "tenacity",
+  "requests",
+  "cloudera-cde-sdk>=1.0.2",
+]
+authors = [
+  { name = "Cloudera" },
+]
+
+[project.entry-points."apache_airflow_provider"]
+provider_info = "cloudera.airflow.providers:get_provider_info"
+
+[tool.setuptools.packages.find]
+include = ["cloudera*"]

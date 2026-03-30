@@ -32,17 +32,16 @@
 #  RELATED TO LOST REVENUE, LOST PROFITS, LOSS OF INCOME, LOSS OF
 #  BUSINESS ADVANTAGE OR UNAVAILABILITY, OR LOSS OR CORRUPTION OF
 #  DATA.
-"""Covers root exception for CDP hooks"""
+"""This module is deprecated. Please use :mod:`cloudera.airflow.providers.model.connection`."""
 
-from __future__ import annotations
+import warnings
 
+from cloudera.airflow.providers.model.connection import (  # pylint: disable=unused-import # noqa:F401
+    CdeConnection as CDEConnection,
+)
 
-class CdpHookException(Exception):
-    """Root exception for custom Cloudera hooks, which is used to handle any known exceptions"""
-
-    def __init__(self, raised_from: Exception | None = None, msg: str | None = None) -> None:
-        super().__init__(raised_from, msg)
-        self.raised_from = raised_from
-
-    def __str__(self) -> str:
-        return self.__repr__()
+warnings.warn(
+    "This module is deprecated. Please use `cloudera.airflow.providers.model.connection`.",
+    DeprecationWarning,
+    stacklevel=2,
+)
