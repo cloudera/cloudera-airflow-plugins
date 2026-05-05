@@ -4,9 +4,7 @@ Cloudera provider for data orchestration with Apache Airflow.
 
 ## Overview
 
-Use Cloudera Airflow provider with [Cloudera Data Engineering](https://docs.cloudera.com/data-engineering/cloud/index.html) and [Cloudera Data Warehouse](https://docs.cloudera.com/data-warehouse/cloud/index.html) services to get convenience of [Apache Airflow](https://github.com/apache/airflow) in your data orchestration and scheduling.
-Cloudera Airflow provider comes with the following features:
-- CdeRunJobOperator: launches a CDE job
+[Apache Airflow](https://github.com/apache/airflow) provider for **[Cloudera Data Engineering](https://docs.cloudera.com/data-engineering/cloud/index.html)** (CDE).
 
 Python package: [cloudera-airflow-provider](https://pypi.org/project/cloudera-airflow-provider/)
 

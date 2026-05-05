@@ -54,6 +54,8 @@ def get_provider_info():  # pragma: no cover , metadata only used for building
             }
         ],
         "versions": [
+            "2.3.1",
+            "2.3.0",
             "2.2.0",
             "2.1.4",
             "2.1.3",
