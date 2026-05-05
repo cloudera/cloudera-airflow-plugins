@@ -16,7 +16,6 @@ Data orchestration with Apache Airflow securely at scale to increase efficiency 
     
         - [Cloudera Data Engineering connection](/cloudera_airflow_provider#cloudera-data-engineering-connection)
         
-        - [Hive CLI connection to Cloudera Data Warehouse](/cloudera_airflow_provider#hive-cli-connection-to-cloudera-data-warehouse)
         
 - [Usage details](/cloudera_airflow_provider#usage-details)
 
