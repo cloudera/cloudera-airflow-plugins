@@ -61,12 +61,14 @@ from cloudera.airflow.providers.hooks import CdpHookException
 from cloudera.airflow.providers.model.connection import CdeConnection
 from cloudera.cdp.model.cde import VirtualCluster
 from cloudera.cdp.security import SecurityError
+from cloudera.cdp.security.awc_security import AwcCredentials, AwcPlatformTokenAuth
 from cloudera.cdp.security.cde_security import BearerAuth, CdeApiTokenAuth, CdeTokenAuthResponse
 from cloudera.cdp.security.cdp_security import CdpAccessKeyCredentials, CdpAccessKeyV2TokenAuth
 from cloudera.cdp.security.token_cache import EncryptedFileTokenCacheStrategy
 
 DEFAULT_RETRY_INTERVAL = 4
 RETRY_AFTER_HEADER = "Retry-After"
+AWC_ACCESS_KEYS_TOKEN_ROUTE = "/api/v0/auth/access-keys/token"
 TimeUnitType = typing.Union[int, float, timedelta]
 
 HTTP_EMPTY_BODY_RESPONSES = [b"", None]
@@ -280,8 +282,8 @@ class CdeHook(BaseHook):  # type: ignore
             "hidden_fields": ["schema", "port"],
             "relabeling": {
                 "host": "Virtual Cluster API endpoint",
-                "login": "CDP Access Key",
-                "password": "CDP Private Key",
+                "login": "Access Key",
+                "password": "Private Key",
             },
         }
 
@@ -458,12 +460,63 @@ class CdeHook(BaseHook):  # type: ignore
 
     def get_cde_token(self) -> str:
         """
-        Obtains valid CDE token through CDP access token
+        Obtains a valid bearer token for CDE API calls.
+
+        AWC mode exchanges OAuth client credentials at the destination console.
+        CDP mode obtains a CDE token through CDP access token.
 
         Returns:
             cde_token: a valid token for submitting request to the CDE Cluster
         """
         self.log.debug("Starting CDE token acquisition")
+        if self.connection.is_awc_auth():
+            return self._get_awc_cde_token()
+        return self._get_cdp_cde_token()
+
+    def _get_awc_cde_token(self) -> str:
+        try:
+            awc_cred = AwcCredentials(
+                self.connection.access_key,
+                self.connection.private_key,
+            )
+
+            console_url = AwcPlatformTokenAuth.normalize_console_url(self.connection.awc_console_url)
+            cache_mech_extra_kw = {}
+            cache_dir = self.connection.cache_dir
+            if cache_dir:
+                cache_mech_extra_kw = {"cache_dir": cache_dir}
+            cache_mech = EncryptedFileTokenCacheStrategy(
+                CdeTokenAuthResponse,
+                encryption_key=AwcPlatformTokenAuth.derive_auth_secret(
+                    awc_cred.client_id,
+                    awc_cred.client_secret,
+                    console_url,
+                ),
+                **cache_mech_extra_kw,
+            )
+
+            awc_auth = AwcPlatformTokenAuth(
+                console_url,
+                AWC_ACCESS_KEYS_TOKEN_ROUTE,
+                awc_cred,
+                cache_mech,
+                insecure=self.connection.insecure,
+                custom_ca_path=self.connection.ca_cert_path_access_key_auth,
+            )
+
+            cde_token = awc_auth.get_cde_authentication_token().access_token
+            self.log.debug("CDE token successfully acquired")
+            return cde_token
+        except SecurityError as err:
+            self.log.error(
+                "Failed to get AWC auth token for the connection %s, error: %s",
+                self.cde_conn_id,
+                err,
+            )
+            raise CdeHookException(err) from err
+
+    def _get_cdp_cde_token(self) -> str:
+        """Obtain CDE token via CDP access token authentication."""
         access_key, private_key = (
             self.connection.access_key,
             self.connection.private_key,
