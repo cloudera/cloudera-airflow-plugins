@@ -56,7 +56,10 @@ try:
     from airflow.providers.fab.auth_manager.models import User  # noqa pylint: disable=unused-import
 except ImportError:
     pass
-from cloudera.airflow.providers.model.connection import CdeConnection
+from cloudera.airflow.providers.model.connection import (
+    AuthMode,
+    CdeConnection,
+)
 
 
 class CdeConnectionTest(unittest.TestCase):
@@ -103,6 +106,56 @@ class CdeConnectionTest(unittest.TestCase):
         self.assertTrue(connection is not None)
         self.assertTrue(connection.extra is not None)
         self.assertEqual(json.loads(connection.extra), {"region": "ap-1", "foo": "bar"})
+
+    def test_default_auth_mode_is_cdp(self):
+        """Test that default auth_mode is CDP when extra is absent"""
+        cde_connection = self.create_test_connection()
+        self.session.add(cde_connection)
+        self.session.commit()
+        cde_connection = CdeConnection.from_airflow_connection(cde_connection)
+
+        self.assertEqual(cde_connection.auth_mode, AuthMode.CDP)
+        self.assertFalse(cde_connection.is_awc_auth())
+
+    def test_awc_auth_mode_parsed(self):
+        """Test that AWC auth_mode and awc_console_url are parsed from connection extra"""
+        cde_connection = self.create_test_connection()
+        cde_connection.set_extra(
+            json.dumps(
+                {
+                    "auth_mode": "awc",
+                    "awc_console_url": "https://console.example.com",
+                }
+            )
+        )
+        self.session.add(cde_connection)
+        self.session.commit()
+        cde_connection = CdeConnection.from_airflow_connection(cde_connection)
+
+        self.assertEqual(cde_connection.auth_mode, AuthMode.AWC)
+        self.assertTrue(cde_connection.is_awc_auth())
+        self.assertEqual(cde_connection.awc_console_url, "https://console.example.com")
+
+    def test_explicit_cdp_auth_mode_parsed(self):
+        """Test that auth_mode cdp is parsed explicitly from connection extra"""
+        cde_connection = self.create_test_connection()
+        cde_connection.set_extra(json.dumps({"auth_mode": "cdp"}))
+        self.session.add(cde_connection)
+        self.session.commit()
+        cde_connection = CdeConnection.from_airflow_connection(cde_connection)
+
+        self.assertEqual(cde_connection.auth_mode, AuthMode.CDP)
+        self.assertFalse(cde_connection.is_awc_auth())
+
+    def test_invalid_auth_mode_raises(self):
+        """Test that unknown auth_mode values raise ValueError during connection parsing"""
+        cde_connection = self.create_test_connection()
+        cde_connection.set_extra(json.dumps({"auth_mode": "invalid"}))
+        self.session.add(cde_connection)
+        self.session.commit()
+
+        with self.assertRaises(ValueError):
+            CdeConnection.from_airflow_connection(cde_connection)
 
     @classmethod
     def create_test_connection(cls):

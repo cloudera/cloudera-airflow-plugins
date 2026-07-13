@@ -15,6 +15,7 @@ Data orchestration with Apache Airflow securely at scale to increase efficiency 
     - [Setting up Airflow Connections](/cloudera_airflow_provider#setting-up-the-airflow-connections)
     
         - [Cloudera Data Engineering connection](/cloudera_airflow_provider#cloudera-data-engineering-connection)
+        - [AWC Cloudera Data Engineering connection](/cloudera_airflow_provider#awc-connection-auth_mode-awc)
         
         
 - [Usage details](/cloudera_airflow_provider#usage-details)

@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 from json.decoder import JSONDecodeError
@@ -46,6 +47,13 @@ from airflow.utils.session import provide_session
 from cloudera.cdp.security.cdp_security import FormFactor
 
 LOG = logging.getLogger(__name__)
+
+
+class AuthMode(str, enum.Enum):
+    """CDE connection authentication modes."""
+
+    CDP = "cdp"
+    AWC = "awc"
 
 
 class CdeConnection(Connection):
@@ -72,6 +80,8 @@ class CdeConnection(Connection):
         ca_cert_path_access_key_auth: str | None = None,
         form_factor: FormFactor | None = None,
         env_crn: str | None = None,
+        auth_mode: AuthMode = AuthMode.CDP,
+        awc_console_url: str | None = None,
     ) -> None:
         super().__init__(
             conn_id=connection_id,
@@ -93,6 +103,12 @@ class CdeConnection(Connection):
         self.ca_cert_path_access_key_auth = ca_cert_path_access_key_auth
         self.form_factor = form_factor
         self.env_crn = env_crn
+        self.auth_mode = auth_mode
+        self.awc_console_url = awc_console_url
+
+    def is_awc_auth(self) -> bool:
+        """True when the connection uses AWC OAuth client-credentials auth."""
+        return self.auth_mode == AuthMode.AWC
 
     def is_external(self) -> bool:
         """Checks if connection is external. External connections
@@ -145,7 +161,7 @@ class CdeConnection(Connection):
 
     @property
     def access_key(self) -> str:
-        """CDP Access key
+        """Access key
 
         Returns:
             the access key associated to the connection
@@ -154,7 +170,7 @@ class CdeConnection(Connection):
 
     @property
     def private_key(self) -> str:
-        """CDP Private key
+        """Private key
 
         Returns:
             the private key associated to the connection
@@ -166,6 +182,15 @@ class CdeConnection(Connection):
     @classmethod
     def __internal_connection(cls, hostname: str) -> bool:
         return hostname.endswith(".svc") or hostname.endswith(".svc.cluster.local")
+
+    @classmethod
+    def _parse_auth_mode(cls, extra: dict) -> AuthMode:
+        auth_mode = extra.get("auth_mode", AuthMode.CDP.value)
+        try:
+            return AuthMode(auth_mode)
+        except ValueError as err:
+            valid = ", ".join(sorted(mode.value for mode in AuthMode))
+            raise ValueError(f"Invalid auth_mode {auth_mode}: must be one of {valid}") from err
 
     @classmethod
     def from_airflow_connection(cls, conn: Connection) -> CdeConnection:
@@ -220,6 +245,8 @@ class CdeConnection(Connection):
             ca_cert_path_access_key_auth=extra.get("ca_cert_path_access_key_auth"),
             form_factor=form_factor,
             env_crn=extra.get("env_crn"),
+            auth_mode=cls._parse_auth_mode(extra),
+            awc_console_url=extra.get("awc_console_url"),
         )
 
     def __repr__(self) -> str:

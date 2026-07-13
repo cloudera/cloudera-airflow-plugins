@@ -59,6 +59,7 @@ from airflow.hooks.base import BaseHook
 from airflow.models import Connection
 from tests.providers.cloudera.utils import _get_call_arguments, _make_response
 from cloudera.airflow.providers.hooks.cde import (
+    AWC_ACCESS_KEYS_TOKEN_ROUTE,
     DEFAULT_RETRY_INTERVAL,
     RETRY_AFTER_HEADER,
     CdeHook,
@@ -90,8 +91,32 @@ TEST_PK = "private_key_xxxxx_xxxxx_xxxxx_xxxxx"
 TEST_CUSTOM_CA_CERTIFICATE = "/ca_cert/letsencrypt-stg-root-x1.pem"
 TEST_EXTRA = f'{{"ca_cert_path": "{TEST_CUSTOM_CA_CERTIFICATE}", "region": "us-west-1"}}'
 GET_CDE_AUTH_TOKEN_METHOD = "cloudera.cdp.security.cde_security.CdeApiTokenAuth.get_cde_authentication_token"
+GET_AWC_AUTH_TOKEN_METHOD = (
+    "cloudera.cdp.security.awc_security.AwcPlatformTokenAuth.get_cde_authentication_token"
+)
 GET_AIRFLOW_CONFIG = "airflow.providers.cloudera.hooks.cde_hook.conf"
 INVALID_JSON_STRING = "{'invalid_json"
+
+TEST_AWC_CONSOLE_URL = "https://console.example.com"
+TEST_AWC_CONSOLE_CA = "/ca_cert/console-ca.pem"
+TEST_AWC_EXTRA = (
+    f'{{"auth_mode": "awc", "awc_console_url": "{TEST_AWC_CONSOLE_URL}", '
+    f'"ca_cert_path": "{TEST_CUSTOM_CA_CERTIFICATE}"}}'
+)
+TEST_AWC_NO_CONSOLE_EXTRA = '{"auth_mode": "awc"}'
+TEST_AWC_SPLIT_CA_EXTRA = (
+    f'{{"auth_mode": "awc", "awc_console_url": "{TEST_AWC_CONSOLE_URL}", '
+    f'"ca_cert_path": "{TEST_CUSTOM_CA_CERTIFICATE}", '
+    f'"ca_cert_path_access_key_auth": "{TEST_AWC_CONSOLE_CA}"}}'
+)
+TEST_AWC_CACHE_DIR = "/tmp/awc-token-cache"
+TEST_AWC_CACHE_DIR_EXTRA = (
+    f'{{"auth_mode": "awc", "awc_console_url": "{TEST_AWC_CONSOLE_URL}", '
+    f'"cache_dir": "{TEST_AWC_CACHE_DIR}"}}'
+)
+TEST_AWC_INSECURE_EXTRA = (
+    f'{{"auth_mode": "awc", "awc_console_url": "{TEST_AWC_CONSOLE_URL}", "insecure": true}}'
+)
 
 
 def _get_test_connection(**kwargs):
@@ -1318,6 +1343,156 @@ class CdeHookTest(unittest.TestCase):
         cde_mock.assert_called()
         connection_mock.assert_called()
         session_send_mock.assert_called()
+
+    @mock.patch(GET_AWC_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD)
+    @mock.patch.object(BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_EXTRA))
+    def test_get_awc_cde_token_success(self, connection_mock, cde_auth_mock, awc_auth_mock):
+        """Test that AWC mode exchanges OAuth credentials and does not use CdeApiTokenAuth"""
+        cde_hook = CdeHook()
+        token = cde_hook.get_cde_token()
+        self.assertEqual(token, VALID_CDE_TOKEN)
+        awc_auth_mock.assert_called_once()
+        cde_auth_mock.assert_not_called()
+        connection_mock.assert_called()
+
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD)
+    @mock.patch("cloudera.airflow.providers.hooks.cde.EncryptedFileTokenCacheStrategy")
+    @mock.patch("cloudera.airflow.providers.hooks.cde.AwcPlatformTokenAuth")
+    @mock.patch.object(
+        BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_SPLIT_CA_EXTRA)
+    )
+    def test_get_awc_cde_token_uses_access_key_auth_ca(
+        self, connection_mock, awc_auth_mock, cache_strategy_mock, cde_auth_mock
+    ):
+        """Test that AWC console TLS uses ca_cert_path_access_key_auth"""
+        awc_auth_mock.normalize_console_url.return_value = TEST_AWC_CONSOLE_URL
+        awc_auth_mock.derive_auth_secret.return_value = "1234567890"
+        awc_auth_mock.return_value.get_cde_authentication_token.return_value = VALID_CDE_TOKEN_AUTH_RESPONSE
+        cde_hook = CdeHook()
+        cde_hook.get_cde_token()
+        awc_auth_mock.assert_called_once_with(
+            TEST_AWC_CONSOLE_URL,
+            AWC_ACCESS_KEYS_TOKEN_ROUTE,
+            mock.ANY,
+            cache_strategy_mock.return_value,
+            insecure=False,
+            custom_ca_path=TEST_AWC_CONSOLE_CA,
+        )
+        cache_strategy_mock.assert_called_once_with(
+            CdeTokenAuthResponse,
+            encryption_key="1234567890",
+        )
+        cde_auth_mock.assert_not_called()
+        connection_mock.assert_called()
+
+    @mock.patch.object(
+        BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_NO_CONSOLE_EXTRA)
+    )
+    def test_get_awc_cde_token_missing_console_url(self, connection_mock):
+        """Test a fail on missing awc_console_url."""
+        from cloudera.cdp.security.awc_security import MissingAwcConsoleUrlError
+
+        cde_hook = CdeHook()
+        with self.assertRaises(CdeHookException) as err:
+            cde_hook.get_cde_token()
+        self.assertIsInstance(err.exception.raised_from, MissingAwcConsoleUrlError)
+        connection_mock.assert_called()
+
+    @mock.patch(GET_AWC_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD)
+    @mock.patch.object(Session, "send", return_value=_make_response(200, {"appName": TEST_CLUSTER_NAME}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_EXTRA))
+    def test_test_connection_ok_awc(self, connection_mock, session_send_mock, cde_auth_mock, awc_auth_mock):
+        """Test a successful connection to the API using AWC authentication"""
+        cde_hook = CdeHook()
+        test_result = cde_hook.test_connection()
+        self.assertTrue(test_result[0])
+        awc_auth_mock.assert_called_once()
+        cde_auth_mock.assert_not_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called()
+
+    @mock.patch(GET_AWC_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_EXTRA))
+    def test_submit_job_ok_awc_connection(
+        self, connection_mock, session_send_mock, cde_auth_mock, awc_auth_mock
+    ):
+        """Test a successful job submission using AWC authentication"""
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        awc_auth_mock.assert_called_once()
+        cde_auth_mock.assert_not_called()
+        connection_mock.assert_called()
+        session_send_mock.assert_called()
+
+    @mock.patch(GET_AWC_AUTH_TOKEN_METHOD, return_value=VALID_CDE_TOKEN_AUTH_RESPONSE)
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD)
+    @mock.patch.object(Session, "send", return_value=_make_response(201, {"id": TEST_JOB_RUN_ID}, ""))
+    @mock.patch.object(BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_EXTRA))
+    def test_submit_job_awc_uses_ca_cert_path(
+        self, connection_mock, session_send_mock, cde_auth_mock, awc_auth_mock
+    ):
+        """Test that AWC connections use ca_cert_path for CDE Jobs API TLS"""
+        cde_hook = CdeHook()
+        run_id = cde_hook.submit_job(TEST_JOB_NAME)
+        self.assertEqual(run_id, TEST_JOB_RUN_ID)
+        called_args = _get_call_arguments(session_send_mock.call_args)
+        self.assertEqual(called_args["verify"], TEST_CUSTOM_CA_CERTIFICATE)
+        awc_auth_mock.assert_called_once()
+        cde_auth_mock.assert_not_called()
+
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD)
+    @mock.patch("cloudera.airflow.providers.hooks.cde.EncryptedFileTokenCacheStrategy")
+    @mock.patch("cloudera.airflow.providers.hooks.cde.AwcPlatformTokenAuth")
+    @mock.patch.object(
+        BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_CACHE_DIR_EXTRA)
+    )
+    def test_get_awc_cde_token_with_cache_dir(
+        self, connection_mock, awc_auth_mock, cache_strategy_mock, cde_auth_mock
+    ):
+        """Test that AWC token cache receives cache_dir from connection extra"""
+        awc_auth_mock.normalize_console_url.return_value = TEST_AWC_CONSOLE_URL
+        awc_auth_mock.derive_auth_secret.return_value = "1234567890"
+        awc_auth_mock.return_value.get_cde_authentication_token.return_value = VALID_CDE_TOKEN_AUTH_RESPONSE
+        cde_hook = CdeHook()
+        cde_hook.get_cde_token()
+        cache_strategy_mock.assert_called_once_with(
+            CdeTokenAuthResponse,
+            encryption_key="1234567890",
+            cache_dir=TEST_AWC_CACHE_DIR,
+        )
+        cde_auth_mock.assert_not_called()
+        connection_mock.assert_called()
+
+    @mock.patch(GET_CDE_AUTH_TOKEN_METHOD)
+    @mock.patch("cloudera.airflow.providers.hooks.cde.EncryptedFileTokenCacheStrategy")
+    @mock.patch("cloudera.airflow.providers.hooks.cde.AwcPlatformTokenAuth")
+    @mock.patch.object(
+        BaseHook, "get_connection", return_value=_get_test_connection(extra=TEST_AWC_INSECURE_EXTRA)
+    )
+    def test_get_awc_cde_token_insecure(
+        self, connection_mock, awc_auth_mock, cache_strategy_mock, cde_auth_mock
+    ):
+        """Test that AWC auth passes insecure flag from connection extra"""
+        awc_auth_mock.normalize_console_url.return_value = TEST_AWC_CONSOLE_URL
+        awc_auth_mock.derive_auth_secret.return_value = "1234567890"
+        awc_auth_mock.return_value.get_cde_authentication_token.return_value = VALID_CDE_TOKEN_AUTH_RESPONSE
+        cde_hook = CdeHook()
+        cde_hook.get_cde_token()
+        awc_auth_mock.assert_called_once_with(
+            TEST_AWC_CONSOLE_URL,
+            AWC_ACCESS_KEYS_TOKEN_ROUTE,
+            mock.ANY,
+            cache_strategy_mock.return_value,
+            insecure=True,
+            custom_ca_path=None,
+        )
+        cde_auth_mock.assert_not_called()
+        connection_mock.assert_called()
 
 
 if __name__ == "__main__":
